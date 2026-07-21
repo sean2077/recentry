@@ -2,9 +2,15 @@
 
 ## Unreleased
 
-## 0.1.0-beta.2 — 2026-07-21
+## 0.1.0-beta.3 — 2026-07-21
 
-- Publish the second unsigned Windows x64 beta with the NSIS installer, portable ZIP, and SHA-256 checksums.
+- Publish the second public Windows x64 beta with the NSIS installer, portable ZIP, and SHA-256 checksums.
+- Retry removal of the Start Menu shortcut during uninstall when Windows temporarily holds the link, and report a visible failure if retries are exhausted.
+- Include the shared-runtime, cross-platform foundation, CI, and documentation work prepared in the tagged but unpublished `v0.1.0-beta.2` snapshot.
+
+## 0.1.0-beta.2 — 2026-07-21 (not published)
+
+- Tag the candidate but stop publication when repeated final package smoke exposed intermittent Start Menu shortcut residue after uninstall.
 - Add platform-aware stable VS Code discovery and path identity for Windows, Linux, and macOS fixtures.
 - Add owner-only Unix-domain-socket IPC with stale-endpoint recovery, bounded framing, and peer-user verification.
 - Extract shared host command/configuration behavior and cross-platform UI-child supervision while preserving Win32 event-thread shortcut registration.

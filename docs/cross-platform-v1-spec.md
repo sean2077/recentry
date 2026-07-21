@@ -33,7 +33,7 @@ Deliver a genuinely supported, low-resource Recentry release that opens or focus
 - Local targets and supported VS Code URIs are launched with argument arrays, never shell-composed commands.
 - There is no telemetry, cloud synchronization, background network traffic, or transmission of project paths. Diagnostics hide or hash sensitive paths.
 - Repository documentation and public-facing release text are written in English. The product UI supports English and Simplified Chinese.
-- The independently versioned Windows-only `v0.1.0-beta.N` preview line, including `v0.1.0-beta.2`, does not satisfy this specification or change its support gates.
+- The independently versioned Windows-only `v0.1.0-beta.N` preview line does not satisfy this specification or change its support gates.
 
 ## Non-goals
 
