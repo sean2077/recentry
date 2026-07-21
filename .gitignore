@@ -1,0 +1,6 @@
+.oma/
+/target/
+/scratch/
+/node_modules/
+/dist/
+*.pdb

@@ -1,0 +1,32 @@
+[workspace]
+members = [
+  "crates/recentry-core",
+  "crates/recentry-host",
+  "crates/recentry-ipc",
+  "crates/recentry-protocol",
+  "crates/recentry-ui",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0-beta.1"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/sean2077/recentry"
+rust-version = "1.86"
+
+[workspace.dependencies]
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tempfile = "3.27.0"
+thiserror = "2.0.17"
+url = "2.5.8"
+windows-sys = "0.61.2"
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z"
+panic = "abort"
+strip = "symbols"

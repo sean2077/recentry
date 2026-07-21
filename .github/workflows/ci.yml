@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-beta:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.86.0
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked
+      - name: Install NSIS
+        run: choco install nsis --version=3.12.0 --yes --no-progress
+      - name: Package Windows x64
+        shell: pwsh
+        run: tools/package-windows.ps1
+      - name: Package smoke test
+        shell: pwsh
+        run: tools/test-windows-package.ps1
+      - uses: actions/upload-artifact@v6
+        with:
+          name: recentry-windows-x64
+          path: dist/*
+          if-no-files-found: error
+
+  portable-core:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - name: Compile and test portable core
+        run: cargo test -p recentry-core -p recentry-protocol --locked
