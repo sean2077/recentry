@@ -50,7 +50,7 @@ impl HostAdapter for UnixDevelopmentAdapter {
     fn set_autostart(&self, enabled: bool, executable: &Path) -> Result<(), String> {
         #[cfg(target_os = "linux")]
         {
-            return set_xdg_autostart(&xdg_config_home(), enabled, executable);
+            set_xdg_autostart(&xdg_config_home(), enabled, executable)
         }
         #[cfg(target_os = "macos")]
         {
@@ -222,10 +222,10 @@ fn parse_action() -> RequestedAction {
 fn config_path() -> PathBuf {
     #[cfg(target_os = "macos")]
     {
-        return env::var_os("HOME")
+        env::var_os("HOME")
             .map(PathBuf::from)
             .unwrap_or_else(env::temp_dir)
-            .join("Library/Application Support/Recentry/config.json");
+            .join("Library/Application Support/Recentry/config.json")
     }
 
     #[cfg(not(target_os = "macos"))]
