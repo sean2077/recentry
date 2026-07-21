@@ -4,7 +4,7 @@ use recentry_core::{
     DiagnosticLevel, DiscoveryEnvironment, OpenOutcome, ProjectId, ProjectKind, ProjectTarget,
     ProviderId, RecentProject, RecentProjectProvider, TargetIdentityPolicy, VsCodeInstallation,
     VsCodePlatformLayout, VsCodeRecentProvider, build_launch_request, database_candidates,
-    deduplicate, deduplicate_with_policy, discover_vscode, parse_recent_value, search_projects,
+    deduplicate_with_policy, discover_vscode, parse_recent_value, search_projects,
     window_state_candidates, window_state_targets,
 };
 #[cfg(windows)]
@@ -70,7 +70,7 @@ fn deduplication_is_case_insensitive_for_windows_paths_and_keeps_newest() {
         project("First", r"C:\Work\Recentry", 0),
         project("Duplicate", r"c:\work\recentry\", 1),
     ];
-    let deduped = deduplicate(projects);
+    let deduped = deduplicate_with_policy(projects, TargetIdentityPolicy::CaseInsensitiveAscii);
     assert_eq!(deduped.len(), 1);
     assert_eq!(deduped[0].name, "First");
 }
