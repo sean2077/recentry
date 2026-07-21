@@ -1,20 +1,28 @@
-use std::{ffi::OsString, fs, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf};
+
+#[cfg(windows)]
+use std::fs;
 
 use recentry_core::{
-    DiagnosticLevel, DiscoveryEnvironment, OpenOutcome, ProjectId, ProjectKind, ProjectOpener,
-    ProjectTarget, ProviderId, RecentProject, RecentProjectProvider, VsCodeInstallation,
-    VsCodeOpener, VsCodeRecentProvider, build_launch_request, database_candidates, deduplicate,
-    discover_vscode, parse_recent_value, search_projects, window_state_targets,
+    DiagnosticLevel, DiscoveryEnvironment, OpenOutcome, ProjectId, ProjectKind, ProjectTarget,
+    ProviderId, RecentProject, RecentProjectProvider, VsCodeInstallation, VsCodeRecentProvider,
+    build_launch_request, database_candidates, deduplicate, discover_vscode, parse_recent_value,
+    search_projects, window_state_targets,
 };
+#[cfg(windows)]
+use recentry_core::{ProjectOpener, VsCodeOpener};
+use url::Url;
 
-fn project(name: &str, target: &str, index: u32) -> RecentProject {
+fn project(name: &str, target: impl Into<PathBuf>, index: u32) -> RecentProject {
+    let target = target.into();
+    let detail = target.to_string_lossy().into_owned();
     RecentProject {
         id: ProjectId(format!("vscode:{index}")),
         provider: ProviderId("vscode".to_owned()),
         kind: ProjectKind::Folder,
-        target: ProjectTarget::LocalPath(PathBuf::from(target)),
+        target: ProjectTarget::LocalPath(target),
         name: name.to_owned(),
-        detail: target.to_owned(),
+        detail,
         recent_index: index,
     }
 }
@@ -71,17 +79,20 @@ fn deduplication_is_case_insensitive_for_windows_paths_and_keeps_newest() {
 
 #[test]
 fn shared_database_precedes_legacy_global_storage() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    let app_data = directory.path().join("appdata");
     let environment = DiscoveryEnvironment {
-        home: PathBuf::from(r"C:\Users\tester"),
-        app_data: PathBuf::from(r"C:\Users\tester\AppData\Roaming"),
-        local_app_data: PathBuf::from(r"C:\Users\tester\AppData\Local"),
-        program_files: PathBuf::from(r"C:\Program Files"),
-        program_files_x86: PathBuf::from(r"C:\Program Files (x86)"),
+        home: home.clone(),
+        app_data: app_data.clone(),
+        local_app_data: directory.path().join("local-appdata"),
+        program_files: directory.path().join("program-files"),
+        program_files_x86: directory.path().join("program-files-x86"),
         path: Vec::new(),
     };
     let installation = VsCodeInstallation {
-        code_exe: PathBuf::from(r"C:\Code\Code.exe"),
-        product_json: PathBuf::from(r"C:\Code\resources\app\product.json"),
+        code_exe: directory.path().join("Code/Code.exe"),
+        product_json: directory.path().join("Code/resources/app/product.json"),
         version: "1.129.1".to_owned(),
         name_short: "Code".to_owned(),
         shared_data_folder_name: ".vscode-shared".to_owned(),
@@ -90,22 +101,26 @@ fn shared_database_precedes_legacy_global_storage() {
     assert_eq!(
         candidates,
         vec![
-            PathBuf::from(r"C:\Users\tester\.vscode-shared\sharedStorage\state.vscdb"),
-            PathBuf::from(r"C:\Users\tester\AppData\Roaming\Code\User\globalStorage\state.vscdb"),
+            home.join(".vscode-shared")
+                .join("sharedStorage")
+                .join("state.vscdb"),
+            app_data
+                .join("Code")
+                .join("User")
+                .join("globalStorage")
+                .join("state.vscdb"),
         ]
     );
 }
 
 #[test]
 fn launch_arguments_focus_open_folder_and_create_new_workspace_window() {
-    let executable = PathBuf::from(r"C:\Code\Code.exe");
-    let folder = project("Recentry", r"C:\work\recentry", 0);
-    let folder_request = build_launch_request(
-        executable.clone(),
-        &folder,
-        &["file:///C:/work/recentry".to_owned()],
-    )
-    .unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("Code.exe");
+    let folder_path = directory.path().join("work/recentry");
+    let folder = project("Recentry", folder_path.clone(), 0);
+    let folder_uri: String = Url::from_directory_path(&folder_path).unwrap().into();
+    let folder_request = build_launch_request(executable.clone(), &folder, &[folder_uri]).unwrap();
     assert_eq!(folder_request.outcome, OpenOutcome::Focused);
     assert!(
         !folder_request
@@ -114,22 +129,22 @@ fn launch_arguments_focus_open_folder_and_create_new_workspace_window() {
     );
     assert_eq!(folder_request.args[0], "--folder-uri");
 
+    let workspace_path = directory.path().join("work/team.code-workspace");
     let workspace = RecentProject {
         kind: ProjectKind::Workspace,
-        target: ProjectTarget::LocalPath(PathBuf::from(r"C:\work\team.code-workspace")),
-        ..project("team", r"C:\work\team.code-workspace", 1)
+        target: ProjectTarget::LocalPath(workspace_path.clone()),
+        ..project("team", workspace_path, 1)
     };
-    let workspace_request = build_launch_request(executable, &workspace, &[]).unwrap();
+    let workspace_request = build_launch_request(executable.clone(), &workspace, &[]).unwrap();
     assert_eq!(workspace_request.outcome, OpenOutcome::OpenedNew);
     assert_eq!(workspace_request.args[0], "--new-window");
     assert_eq!(workspace_request.args[1], "--file-uri");
 
     let remote = RecentProject {
         target: ProjectTarget::Uri("vscode-remote://ssh-remote+devbox/work/api".to_owned()),
-        ..project("api", r"C:\unused", 2)
+        ..project("api", directory.path().join("unused"), 2)
     };
-    let remote_request =
-        build_launch_request(PathBuf::from(r"C:\Code\Code.exe"), &remote, &[]).unwrap();
+    let remote_request = build_launch_request(executable.clone(), &remote, &[]).unwrap();
     assert_eq!(remote_request.args[1], "--folder-uri");
     assert_eq!(
         remote_request.args[2],
@@ -138,9 +153,9 @@ fn launch_arguments_focus_open_folder_and_create_new_workspace_window() {
 
     let unsupported = RecentProject {
         target: ProjectTarget::Uri("https://example.com/project".to_owned()),
-        ..project("unsafe", r"C:\unused", 3)
+        ..project("unsafe", directory.path().join("unused"), 3)
     };
-    assert!(build_launch_request(PathBuf::from(r"C:\Code\Code.exe"), &unsupported, &[]).is_err());
+    assert!(build_launch_request(executable, &unsupported, &[]).is_err());
 }
 
 #[cfg(windows)]
