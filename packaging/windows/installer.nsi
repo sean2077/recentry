@@ -57,6 +57,24 @@ Function un.onInit
   SetRegView 64
 FunctionEnd
 
+Function un.RemoveStartMenuShortcut
+  StrCpy $0 20
+
+shortcut_retry:
+  ClearErrors
+  Delete "$SMPROGRAMS\Recentry.lnk"
+  IfErrors 0 shortcut_removed
+  Sleep 100
+  IntOp $0 $0 - 1
+  IntCmp $0 0 shortcut_failed shortcut_retry shortcut_retry
+
+shortcut_failed:
+  DetailPrint "Failed to remove $SMPROGRAMS\Recentry.lnk"
+  SetErrorLevel 1
+
+shortcut_removed:
+FunctionEnd
+
 Section "Recentry" SEC_RECENTRY
   SetShellVarContext current
   SetOutPath "$INSTDIR"
@@ -95,7 +113,7 @@ Section "Uninstall"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "Recentry"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Recentry"
   DeleteRegKey HKCU "Software\Recentry"
-  Delete "$SMPROGRAMS\Recentry.lnk"
+  Call un.RemoveStartMenuShortcut
 
   Delete "$INSTDIR\recentry.exe"
   Delete "$INSTDIR\recentry-ui.exe"
