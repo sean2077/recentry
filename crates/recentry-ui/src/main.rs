@@ -3,7 +3,7 @@
 
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("Recentry v1 supports Windows x64 only.");
+    eprintln!("Recentry's native UI is not available in this development build.");
 }
 
 #[cfg(windows)]

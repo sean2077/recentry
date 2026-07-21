@@ -1,0 +1,127 @@
+name: Unverified development packages
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - name: Install NSIS
+        run: choco install nsis --version=3.12.0 --yes --no-progress
+      - name: Build development packages
+        shell: pwsh
+        run: tools/package-windows.ps1
+      - name: Smoke packages
+        shell: pwsh
+        run: tools/test-windows-package.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unverified-development-windows-x64
+          path: |
+            dist/Recentry-*-windows-x64-setup.exe
+            dist/Recentry-*-windows-x64.zip
+          if-no-files-found: error
+
+  linux:
+    name: Linux ${{ matrix.arch }} development packages
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+            appimagetool: appimagetool-x86_64.AppImage
+            appimagetool_sha256: a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0
+          - os: ubuntu-24.04-arm
+            arch: aarch64
+            appimagetool: appimagetool-aarch64.AppImage
+            appimagetool_sha256: 1b00524ba8c6b678dc15ef88a5c25ec24def36cdfc7e3abb32ddcd068e8007fe
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - name: Install Linux packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes desktop-file-utils
+      - name: Acquire pinned appimagetool
+        env:
+          TOOL_NAME: ${{ matrix.appimagetool }}
+          TOOL_SHA256: ${{ matrix.appimagetool_sha256 }}
+        run: |
+          curl --fail --location --output "$RUNNER_TEMP/$TOOL_NAME" "https://github.com/AppImage/appimagetool/releases/download/continuous/$TOOL_NAME"
+          echo "$TOOL_SHA256  $RUNNER_TEMP/$TOOL_NAME" | sha256sum --check --strict
+          chmod 0755 "$RUNNER_TEMP/$TOOL_NAME"
+      - name: Build development packages
+        env:
+          ARCH: ${{ matrix.arch }}
+          TOOL_NAME: ${{ matrix.appimagetool }}
+        run: bash tools/package-linux.sh --development --arch "$ARCH" --appimagetool "$RUNNER_TEMP/$TOOL_NAME"
+      - name: Smoke packages
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          deb=(dist/Recentry-*-linux-"$ARCH".deb)
+          appimage=(dist/Recentry-*-linux-"$ARCH".AppImage)
+          [[ ${#deb[@]} -eq 1 && ${#appimage[@]} -eq 1 ]]
+          bash tools/test-linux-package.sh --deb "${deb[0]}" --appimage "${appimage[0]}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unverified-development-linux-${{ matrix.arch }}
+          path: |
+            dist/Recentry-*-linux-${{ matrix.arch }}.deb
+            dist/Recentry-*-linux-${{ matrix.arch }}.AppImage
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.86.0
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - name: Build development packages
+        run: bash tools/package-macos.sh --development
+      - name: Smoke packages
+        run: |
+          zip=(dist/Recentry-*-macos-universal.app.zip)
+          dmg=(dist/Recentry-*-macos-universal.dmg)
+          [[ ${#zip[@]} -eq 1 && ${#dmg[@]} -eq 1 ]]
+          bash tools/test-macos-package.sh --zip "${zip[0]}" --dmg "${dmg[0]}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: unverified-development-macos-universal
+          path: |
+            dist/Recentry-*-macos-universal.app.zip
+            dist/Recentry-*-macos-universal.dmg
+          if-no-files-found: error
+
+  manifest:
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.86.0
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: unverified-development-*
+          path: dist
+          merge-multiple: true
+      - name: Verify atomic asset set and create checksums
+        run: bash tools/package-manifest.sh --development
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recentry-unverified-development-set
+          path: |
+            dist/Recentry-*
+          if-no-files-found: error

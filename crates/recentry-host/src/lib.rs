@@ -1,12 +1,14 @@
 mod config;
+mod runtime;
+mod xdg_autostart;
 
 #[cfg(windows)]
 mod platform;
-#[cfg(windows)]
 mod ui_process;
 
 pub use config::*;
 #[cfg(windows)]
 pub use platform::*;
-#[cfg(windows)]
+pub use runtime::*;
 pub use ui_process::*;
+pub use xdg_autostart::*;

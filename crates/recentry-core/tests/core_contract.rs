@@ -2,9 +2,10 @@ use std::{ffi::OsString, fs, path::PathBuf};
 
 use recentry_core::{
     DiagnosticLevel, DiscoveryEnvironment, OpenOutcome, ProjectId, ProjectKind, ProjectTarget,
-    ProviderId, RecentProject, RecentProjectProvider, VsCodeInstallation, VsCodeRecentProvider,
-    build_launch_request, database_candidates, deduplicate, discover_vscode, parse_recent_value,
-    search_projects, window_state_targets,
+    ProviderId, RecentProject, RecentProjectProvider, TargetIdentityPolicy, VsCodeInstallation,
+    VsCodePlatformLayout, VsCodeRecentProvider, build_launch_request, database_candidates,
+    deduplicate, deduplicate_with_policy, discover_vscode, parse_recent_value, search_projects,
+    window_state_candidates, window_state_targets,
 };
 #[cfg(windows)]
 use recentry_core::{ProjectOpener, VsCodeOpener};
@@ -75,18 +76,113 @@ fn deduplication_is_case_insensitive_for_windows_paths_and_keeps_newest() {
 }
 
 #[test]
+fn target_identity_respects_platform_case_semantics() {
+    let projects = vec![
+        project("Upper", "/work/Recentry", 0),
+        project("Lower", "/work/recentry/", 1),
+    ];
+
+    assert_eq!(
+        deduplicate_with_policy(projects.clone(), TargetIdentityPolicy::CaseSensitive).len(),
+        2
+    );
+    let windows = deduplicate_with_policy(projects, TargetIdentityPolicy::CaseInsensitiveAscii);
+    assert_eq!(windows.len(), 1);
+    assert_eq!(windows[0].name, "Upper");
+}
+
+#[test]
+fn discovers_linux_stable_install_and_storage_layouts() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    let config = home.join(".config");
+    let data = home.join(".local/share");
+    let app = directory.path().join("usr/share/code");
+    let code = app.join("code");
+    let product = app.join("resources/app/product.json");
+    fs::create_dir_all(product.parent().unwrap()).unwrap();
+    fs::write(&code, b"").unwrap();
+    fs::write(
+        &product,
+        r#"{"applicationName":"code","nameShort":"Code","version":"1.130.0","sharedDataFolderName":".vscode"}"#,
+    )
+    .unwrap();
+    let layout =
+        VsCodePlatformLayout::linux(home.clone(), config.clone(), data, vec![app], Vec::new());
+
+    let installation = discover_vscode(&layout, None).unwrap();
+    assert_eq!(installation.code_exe, code);
+    assert_eq!(installation.product_json, product);
+    assert_eq!(
+        database_candidates(&installation, &layout),
+        vec![
+            home.join(".vscode/sharedStorage/state.vscdb"),
+            config.join("Code/User/globalStorage/state.vscdb"),
+            home.join("snap/code/current/.config/Code/User/globalStorage/state.vscdb"),
+            home.join(".var/app/com.visualstudio.code/config/Code/User/globalStorage/state.vscdb"),
+        ]
+    );
+    assert_eq!(
+        window_state_candidates(&installation, &layout),
+        vec![
+            config.join("Code/User/globalStorage/storage.json"),
+            home.join("snap/code/current/.config/Code/User/globalStorage/storage.json"),
+            home.join(".var/app/com.visualstudio.code/config/Code/User/globalStorage/storage.json"),
+        ]
+    );
+}
+
+#[test]
+fn discovers_macos_stable_app_and_storage_layouts() {
+    let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    let application_support = home.join("Library/Application Support");
+    let bundle = directory.path().join("Applications/Visual Studio Code.app");
+    let app = bundle.join("Contents/Resources/app");
+    let code = app.join("bin/code");
+    let product = app.join("product.json");
+    fs::create_dir_all(code.parent().unwrap()).unwrap();
+    fs::write(&code, b"").unwrap();
+    fs::write(
+        &product,
+        r#"{"applicationName":"code","nameShort":"Code","version":"1.130.0","sharedDataFolderName":".vscode"}"#,
+    )
+    .unwrap();
+    let layout = VsCodePlatformLayout::macos(
+        home.clone(),
+        application_support.clone(),
+        vec![bundle],
+        Vec::new(),
+    );
+
+    let installation = discover_vscode(&layout, None).unwrap();
+    assert_eq!(installation.code_exe, code);
+    assert_eq!(installation.product_json, product);
+    assert_eq!(
+        database_candidates(&installation, &layout),
+        vec![
+            home.join(".vscode/sharedStorage/state.vscdb"),
+            application_support.join("Code/User/globalStorage/state.vscdb"),
+        ]
+    );
+    assert_eq!(
+        window_state_candidates(&installation, &layout),
+        vec![application_support.join("Code/User/globalStorage/storage.json")]
+    );
+}
+
+#[test]
 fn shared_database_precedes_legacy_global_storage() {
     let directory = tempfile::tempdir().unwrap();
     let home = directory.path().join("home");
     let app_data = directory.path().join("appdata");
-    let environment = DiscoveryEnvironment {
-        home: home.clone(),
-        app_data: app_data.clone(),
-        local_app_data: directory.path().join("local-appdata"),
-        program_files: directory.path().join("program-files"),
-        program_files_x86: directory.path().join("program-files-x86"),
-        path: Vec::new(),
-    };
+    let environment = DiscoveryEnvironment::windows(
+        home.clone(),
+        app_data.clone(),
+        directory.path().join("local-appdata"),
+        Vec::new(),
+        Vec::new(),
+    );
     let installation = VsCodeInstallation {
         code_exe: directory.path().join("Code/Code.exe"),
         product_json: directory.path().join("Code/resources/app/product.json"),
@@ -225,14 +321,13 @@ fn malformed_sqlite_is_a_safe_provider_failure() {
     fs::create_dir_all(database.parent().unwrap()).unwrap();
     fs::write(&database, b"not a sqlite database").unwrap();
     let provider = VsCodeRecentProvider {
-        environment: DiscoveryEnvironment {
-            home: directory.path().join("home"),
-            app_data: directory.path().join("appdata"),
-            local_app_data: directory.path().join("local"),
-            program_files: directory.path().join("program-files"),
-            program_files_x86: directory.path().join("program-files-x86"),
-            path: Vec::new(),
-        },
+        environment: DiscoveryEnvironment::windows(
+            directory.path().join("home"),
+            directory.path().join("appdata"),
+            directory.path().join("local"),
+            Vec::new(),
+            Vec::new(),
+        ),
         override_path: Some(code),
     };
     let report = provider.discover();
@@ -261,14 +356,13 @@ fn discovers_current_versioned_windows_install_layout() {
         r#"{"applicationName":"code","nameShort":"Code","version":"1.129.1","sharedDataFolderName":".vscode-shared"}"#,
     )
     .unwrap();
-    let environment = DiscoveryEnvironment {
-        home: directory.path().join("home"),
-        app_data: directory.path().join("appdata"),
-        local_app_data: directory.path().join("local"),
-        program_files: directory.path().join("program-files"),
-        program_files_x86: directory.path().join("program-files-x86"),
-        path: Vec::new(),
-    };
+    let environment = DiscoveryEnvironment::windows(
+        directory.path().join("home"),
+        directory.path().join("appdata"),
+        directory.path().join("local"),
+        vec![directory.path().join("Microsoft VS Code")],
+        Vec::new(),
+    );
     let installation = discover_vscode(&environment, Some(&code)).unwrap();
     assert_eq!(installation.product_json, product);
     assert_eq!(installation.version, "1.129.1");

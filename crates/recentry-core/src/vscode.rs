@@ -11,35 +11,320 @@ use url::Url;
 
 use crate::{
     DiagnosticLevel, ProjectId, ProjectKind, ProjectTarget, ProviderDiagnostic, ProviderId,
-    ProviderReport, RecentProject, RecentProjectProvider, deduplicate, target_key,
+    ProviderReport, RecentProject, RecentProjectProvider, TargetIdentityPolicy,
+    deduplicate_with_policy, target_key_with_policy,
 };
 
 pub const RECENT_KEY: &str = "history.recentlyOpenedPathsList";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiscoveryEnvironment {
-    pub home: PathBuf,
-    pub app_data: PathBuf,
-    pub local_app_data: PathBuf,
-    pub program_files: PathBuf,
-    pub program_files_x86: PathBuf,
-    pub path: Vec<PathBuf>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformKind {
+    Windows,
+    Linux,
+    MacOs,
 }
 
-impl DiscoveryEnvironment {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VsCodePlatformLayout {
+    platform: PlatformKind,
+    home: PathBuf,
+    config_root: PathBuf,
+    data_root: PathBuf,
+    application_roots: Vec<PathBuf>,
+    executable_path: Vec<PathBuf>,
+}
+
+pub type DiscoveryEnvironment = VsCodePlatformLayout;
+
+impl VsCodePlatformLayout {
     pub fn current() -> Self {
-        let value = |name: &str| env::var_os(name).map(PathBuf::from).unwrap_or_default();
+        let path = env::var_os("PATH")
+            .map(|value| env::split_paths(&value).collect())
+            .unwrap_or_default();
+
+        #[cfg(target_os = "windows")]
+        {
+            let value = |name: &str| env::var_os(name).map(PathBuf::from).unwrap_or_default();
+            let home = value("USERPROFILE");
+            let roaming_data = value("APPDATA");
+            let local_data = value("LOCALAPPDATA");
+            let mut application_roots = Vec::new();
+            for (root, suffix) in [
+                (&local_data, "Programs/Microsoft VS Code"),
+                (&value("ProgramFiles"), "Microsoft VS Code"),
+                (&value("ProgramFiles(x86)"), "Microsoft VS Code"),
+            ] {
+                if !root.as_os_str().is_empty() {
+                    application_roots.push(root.join(suffix));
+                }
+            }
+            return Self::windows(home, roaming_data, local_data, application_roots, path);
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            let config_root = env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".config"));
+            let data_root = env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".local/share"));
+            let application_roots = vec![
+                PathBuf::from("/usr/share/code"),
+                PathBuf::from("/usr/lib/code"),
+                PathBuf::from("/opt/visual-studio-code"),
+                data_root.join("code"),
+                home.join("snap/code/current/usr/share/code"),
+            ];
+            return Self::linux(home, config_root, data_root, application_roots, path);
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+            let application_support = home.join("Library/Application Support");
+            let application_roots = vec![
+                PathBuf::from("/Applications/Visual Studio Code.app"),
+                home.join("Applications/Visual Studio Code.app"),
+            ];
+            return Self::macos(home, application_support, application_roots, path);
+        }
+
+        #[allow(unreachable_code)]
+        Self::linux(
+            PathBuf::new(),
+            PathBuf::new(),
+            PathBuf::new(),
+            Vec::new(),
+            path,
+        )
+    }
+
+    pub fn windows(
+        home: PathBuf,
+        roaming_data: PathBuf,
+        local_data: PathBuf,
+        application_roots: Vec<PathBuf>,
+        executable_path: Vec<PathBuf>,
+    ) -> Self {
         Self {
-            home: value("USERPROFILE"),
-            app_data: value("APPDATA"),
-            local_app_data: value("LOCALAPPDATA"),
-            program_files: value("ProgramFiles"),
-            program_files_x86: value("ProgramFiles(x86)"),
-            path: env::var_os("PATH")
-                .map(|value| env::split_paths(&value).collect())
-                .unwrap_or_default(),
+            platform: PlatformKind::Windows,
+            home,
+            config_root: roaming_data,
+            data_root: local_data,
+            application_roots,
+            executable_path,
         }
     }
+
+    pub fn linux(
+        home: PathBuf,
+        config_root: PathBuf,
+        data_root: PathBuf,
+        application_roots: Vec<PathBuf>,
+        executable_path: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            platform: PlatformKind::Linux,
+            home,
+            config_root,
+            data_root,
+            application_roots,
+            executable_path,
+        }
+    }
+
+    pub fn macos(
+        home: PathBuf,
+        application_support: PathBuf,
+        application_roots: Vec<PathBuf>,
+        executable_path: Vec<PathBuf>,
+    ) -> Self {
+        Self {
+            platform: PlatformKind::MacOs,
+            home,
+            config_root: application_support.clone(),
+            data_root: application_support,
+            application_roots,
+            executable_path,
+        }
+    }
+
+    pub const fn platform(&self) -> PlatformKind {
+        self.platform
+    }
+
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+
+    pub fn config_root(&self) -> &Path {
+        &self.config_root
+    }
+
+    pub fn data_root(&self) -> &Path {
+        &self.data_root
+    }
+
+    pub const fn target_identity_policy(&self) -> TargetIdentityPolicy {
+        match self.platform {
+            PlatformKind::Windows => TargetIdentityPolicy::CaseInsensitiveAscii,
+            PlatformKind::Linux | PlatformKind::MacOs => TargetIdentityPolicy::CaseSensitive,
+        }
+    }
+
+    fn executable_candidates(&self) -> Vec<PathBuf> {
+        let mut candidates = Vec::new();
+        for directory in &self.executable_path {
+            match self.platform {
+                PlatformKind::Windows => {
+                    candidates.push(directory.join("Code.exe"));
+                    candidates.push(directory.join("code.exe"));
+                    if directory
+                        .file_name()
+                        .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
+                    {
+                        if let Some(parent) = directory.parent() {
+                            candidates.push(parent.join("Code.exe"));
+                        }
+                    }
+                }
+                PlatformKind::Linux | PlatformKind::MacOs => {
+                    candidates.push(directory.join("code"));
+                }
+            }
+        }
+        for root in &self.application_roots {
+            match self.platform {
+                PlatformKind::Windows => candidates.push(root.join("Code.exe")),
+                PlatformKind::Linux => {
+                    candidates.push(root.join("code"));
+                    candidates.push(root.join("bin/code"));
+                }
+                PlatformKind::MacOs => {
+                    candidates.push(root.join("Contents/Resources/app/bin/code"));
+                }
+            }
+        }
+        unique_paths(candidates, self.target_identity_policy())
+    }
+
+    fn normalize_executable_candidate(&self, path: &Path) -> PathBuf {
+        if path.is_dir() {
+            return match self.platform {
+                PlatformKind::Windows => path.join("Code.exe"),
+                PlatformKind::Linux => {
+                    let direct = path.join("code");
+                    if direct.is_file() {
+                        direct
+                    } else {
+                        path.join("bin/code")
+                    }
+                }
+                PlatformKind::MacOs => {
+                    if path.extension().is_some_and(|extension| extension == "app") {
+                        path.join("Contents/Resources/app/bin/code")
+                    } else {
+                        path.join("code")
+                    }
+                }
+            };
+        }
+        if self.platform == PlatformKind::Windows
+            && path
+                .file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case("code.cmd"))
+            && path
+                .parent()
+                .and_then(Path::parent)
+                .is_some_and(|parent| parent.join("Code.exe").is_file())
+        {
+            return path.parent().unwrap().parent().unwrap().join("Code.exe");
+        }
+        path.to_owned()
+    }
+
+    fn product_candidates(&self, executable: &Path) -> Vec<PathBuf> {
+        let mut products = Vec::new();
+        let mut executable_forms = vec![executable.to_owned()];
+        if let Ok(canonical) = fs::canonicalize(executable) {
+            executable_forms.push(canonical);
+        }
+        for executable in executable_forms {
+            let Some(directory) = executable.parent() else {
+                continue;
+            };
+            match self.platform {
+                PlatformKind::Windows => {
+                    products.push(directory.join("resources/app/product.json"));
+                    products.extend(versioned_product_candidates(directory));
+                }
+                PlatformKind::Linux => {
+                    products.push(directory.join("resources/app/product.json"));
+                    if let Some(parent) = directory.parent() {
+                        products.push(parent.join("resources/app/product.json"));
+                    }
+                }
+                PlatformKind::MacOs => {
+                    if let Some(app) = directory.parent() {
+                        products.push(app.join("product.json"));
+                    }
+                }
+            }
+        }
+        unique_paths(products, self.target_identity_policy())
+    }
+
+    fn legacy_storage_roots(&self, name_short: &str) -> Vec<PathBuf> {
+        let mut roots = vec![self.config_root.join(name_short)];
+        if self.platform == PlatformKind::Linux {
+            roots.push(self.home.join("snap/code/current/.config").join(name_short));
+            roots.push(
+                self.home
+                    .join(".var/app/com.visualstudio.code/config")
+                    .join(name_short),
+            );
+        }
+        unique_paths(roots, self.target_identity_policy())
+    }
+}
+
+fn versioned_product_candidates(directory: &Path) -> Vec<PathBuf> {
+    let mut products = fs::read_dir(directory)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| {
+            let product = entry.path().join("resources/app/product.json");
+            product.is_file().then(|| {
+                let modified = entry
+                    .metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok();
+                (modified, product)
+            })
+        })
+        .collect::<Vec<_>>();
+    products.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    products.into_iter().map(|(_, product)| product).collect()
+}
+
+fn unique_paths(paths: Vec<PathBuf>, identity_policy: TargetIdentityPolicy) -> Vec<PathBuf> {
+    let mut seen = HashSet::with_capacity(paths.len());
+    paths
+        .into_iter()
+        .filter(|path| seen.insert(path_key(path, identity_policy)))
+        .collect()
+}
+
+fn path_key(path: &Path, identity_policy: TargetIdentityPolicy) -> String {
+    let mut value = path.to_string_lossy().replace('\\', "/");
+    if matches!(identity_policy, TargetIdentityPolicy::CaseInsensitiveAscii) {
+        value.make_ascii_lowercase();
+    }
+    value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,44 +357,21 @@ pub enum RecentFormatError {
 }
 
 pub fn discover_vscode(
-    environment: &DiscoveryEnvironment,
+    environment: &VsCodePlatformLayout,
     override_path: Option<&Path>,
 ) -> Result<VsCodeInstallation, VsCodeError> {
     if let Some(override_path) = override_path {
-        let executable = normalize_executable_candidate(override_path);
-        return installation_from_executable(&executable);
+        let executable = environment.normalize_executable_candidate(override_path);
+        return installation_from_executable(environment, &executable);
     }
-
-    let mut candidates = Vec::new();
-    for directory in &environment.path {
-        candidates.push(directory.join("Code.exe"));
-        candidates.push(directory.join("code.exe"));
-        if directory
-            .file_name()
-            .is_some_and(|name| name.eq_ignore_ascii_case("bin"))
-        {
-            if let Some(parent) = directory.parent() {
-                candidates.push(parent.join("Code.exe"));
-            }
-        }
-    }
-    candidates.extend([
-        environment
-            .local_app_data
-            .join("Programs/Microsoft VS Code/Code.exe"),
-        environment.program_files.join("Microsoft VS Code/Code.exe"),
-        environment
-            .program_files_x86
-            .join("Microsoft VS Code/Code.exe"),
-    ]);
 
     let mut seen = HashSet::new();
-    for candidate in candidates {
-        let key = candidate.to_string_lossy().to_lowercase();
+    for candidate in environment.executable_candidates() {
+        let key = path_key(&candidate, environment.target_identity_policy());
         if !seen.insert(key) || !candidate.is_file() {
             continue;
         }
-        if let Ok(installation) = installation_from_executable(&candidate) {
+        if let Ok(installation) = installation_from_executable(environment, &candidate) {
             return Ok(installation);
         }
     }
@@ -118,33 +380,45 @@ pub fn discover_vscode(
 
 pub fn database_candidates(
     installation: &VsCodeInstallation,
-    environment: &DiscoveryEnvironment,
+    environment: &VsCodePlatformLayout,
 ) -> Vec<PathBuf> {
-    vec![
+    let mut candidates = vec![
         environment
             .home
             .join(&installation.shared_data_folder_name)
             .join("sharedStorage/state.vscdb"),
+    ];
+    candidates.extend(
         environment
-            .app_data
-            .join(&installation.name_short)
-            .join("User/globalStorage/state.vscdb"),
-    ]
+            .legacy_storage_roots(&installation.name_short)
+            .into_iter()
+            .map(|root| root.join("User/globalStorage/state.vscdb")),
+    );
+    unique_paths(candidates, environment.target_identity_policy())
 }
 
 pub fn window_state_candidates(
     installation: &VsCodeInstallation,
-    environment: &DiscoveryEnvironment,
+    environment: &VsCodePlatformLayout,
 ) -> Vec<PathBuf> {
-    vec![
+    unique_paths(
         environment
-            .app_data
-            .join(&installation.name_short)
-            .join("User/globalStorage/storage.json"),
-    ]
+            .legacy_storage_roots(&installation.name_short)
+            .into_iter()
+            .map(|root| root.join("User/globalStorage/storage.json"))
+            .collect(),
+        environment.target_identity_policy(),
+    )
 }
 
 pub fn parse_recent_value(value: &str) -> Result<Vec<RecentProject>, RecentFormatError> {
+    parse_recent_value_with_policy(value, TargetIdentityPolicy::current())
+}
+
+pub fn parse_recent_value_with_policy(
+    value: &str,
+    policy: TargetIdentityPolicy,
+) -> Result<Vec<RecentProject>, RecentFormatError> {
     let parsed: Value = serde_json::from_str(value)?;
     let entries = match &parsed {
         Value::Object(object) => object
@@ -158,9 +432,9 @@ pub fn parse_recent_value(value: &str) -> Result<Vec<RecentProject>, RecentForma
     let projects = entries
         .iter()
         .enumerate()
-        .filter_map(|(index, entry)| recent_project(entry, index as u32))
+        .filter_map(|(index, entry)| recent_project(entry, index as u32, policy))
         .collect();
-    Ok(deduplicate(projects))
+    Ok(deduplicate_with_policy(projects, policy))
 }
 
 pub struct VsCodeRecentProvider {
@@ -190,7 +464,10 @@ impl RecentProjectProvider for VsCodeRecentProvider {
                 continue;
             }
             match read_recent_value(database) {
-                Ok(Some(value)) => match parse_recent_value(&value) {
+                Ok(Some(value)) => match parse_recent_value_with_policy(
+                    &value,
+                    self.environment.target_identity_policy(),
+                ) {
                     Ok(projects) => {
                         diagnostics.push(ProviderDiagnostic {
                             level: DiagnosticLevel::Info,
@@ -254,51 +531,14 @@ impl RecentProjectProvider for VsCodeRecentProvider {
     }
 }
 
-fn normalize_executable_candidate(path: &Path) -> PathBuf {
-    if path.is_dir() {
-        return path.join("Code.exe");
-    }
-    if path
-        .file_name()
-        .is_some_and(|name| name.eq_ignore_ascii_case("code.cmd"))
-        && path
-            .parent()
-            .and_then(Path::parent)
-            .is_some_and(|parent| parent.join("Code.exe").is_file())
-    {
-        return path.parent().unwrap().parent().unwrap().join("Code.exe");
-    }
-    path.to_owned()
-}
-
-fn installation_from_executable(executable: &Path) -> Result<VsCodeInstallation, VsCodeError> {
+fn installation_from_executable(
+    layout: &VsCodePlatformLayout,
+    executable: &Path,
+) -> Result<VsCodeInstallation, VsCodeError> {
     if !executable.is_file() {
         return Err(VsCodeError::NotFound);
     }
-    let directory = executable.parent().ok_or_else(|| {
-        VsCodeError::InvalidProduct("Code.exe has no parent directory".to_owned())
-    })?;
-    let mut products = vec![directory.join("resources/app/product.json")];
-    let mut versioned = fs::read_dir(directory)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-        .filter_map(|entry| {
-            let product = entry.path().join("resources/app/product.json");
-            product.is_file().then(|| {
-                let modified = entry
-                    .metadata()
-                    .and_then(|metadata| metadata.modified())
-                    .ok();
-                (modified, product)
-            })
-        })
-        .collect::<Vec<_>>();
-    versioned.sort_by_key(|entry| std::cmp::Reverse(entry.0));
-    products.extend(versioned.into_iter().map(|(_, product)| product));
-
-    for product_json in products {
+    for product_json in layout.product_candidates(executable) {
         if !product_json.is_file() {
             continue;
         }
@@ -327,7 +567,7 @@ fn installation_from_executable(executable: &Path) -> Result<VsCodeInstallation,
         });
     }
     Err(VsCodeError::InvalidProduct(
-        "stable product.json was not found next to Code.exe".to_owned(),
+        "stable product.json was not found for the executable".to_owned(),
     ))
 }
 
@@ -360,7 +600,11 @@ fn read_recent_value(database: &Path) -> Result<Option<String>, String> {
     }
 }
 
-fn recent_project(entry: &Value, recent_index: u32) -> Option<RecentProject> {
+fn recent_project(
+    entry: &Value,
+    recent_index: u32,
+    identity_policy: TargetIdentityPolicy,
+) -> Option<RecentProject> {
     let object = entry.as_object()?;
     let label = object.get("label").and_then(Value::as_str);
     let (kind, raw_target) = if let Some(folder) = object.get("folderUri") {
@@ -394,7 +638,7 @@ fn recent_project(entry: &Value, recent_index: u32) -> Option<RecentProject> {
         ProjectTarget::LocalPath(path) => path.to_string_lossy().into_owned(),
         ProjectTarget::Uri(uri) => uri.clone(),
     };
-    let key = target_key(&target);
+    let key = target_key_with_policy(&target, identity_policy);
     Some(RecentProject {
         id: ProjectId(format!("vscode:{:016x}", fnv1a(key.as_bytes()))),
         provider: ProviderId("vscode".to_owned()),

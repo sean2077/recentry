@@ -1,92 +1,102 @@
 # Recentry
 
-Recentry is a low-resource Windows launcher for recent development projects. Press `Ctrl+Alt+R`, type to filter, then use the arrow keys and Enter to open or focus a VS Code project.
+[![CI](https://github.com/sean2077/recentry/actions/workflows/ci.yml/badge.svg)](https://github.com/sean2077/recentry/actions/workflows/ci.yml)
 
-The launcher uses a compact single-line layout and dismisses itself when it loses focus, when you press Esc, or after a project opens successfully.
+Recentry is a low-resource, native launcher for reopening recent development projects. Press a global shortcut, type to filter, then use the keyboard to open or focus a project in VS Code.
 
-The current beta supports Windows x64 and the stable edition of VS Code. Linux and macOS builds are not published or supported yet.
+Cross-platform support is under active development. The only public end-user build today is the historical unsigned Windows x64 beta, `v0.1.0-beta.1`. Linux and macOS code, CI, and development packaging do not yet satisfy the native UI, resource, signing, or real-machine acceptance gates and are not supported releases.
 
-## Install
+| Platform | Current status | Public artifacts |
+| --- | --- | --- |
+| Windows 10/11 x64 | Beta available; Windows 11 acceptance recorded | NSIS installer and portable ZIP for `v0.1.0-beta.1` |
+| Linux x86_64/ARM64 | In development; native UI gate blocked pending real desktops | None |
+| macOS 13+ Intel/Apple Silicon | In development; AppKit and native acceptance pending | None |
 
-### Installer (recommended)
+See [Platform support](docs/platform-support.md) for the evidence boundary.
 
-1. Download `Recentry-0.1.0-beta.1-windows-x64-setup.exe` and `Recentry-0.1.0-beta.1-windows-x64-SHA256SUMS.txt`.
-2. Verify the installer hash against the checksum file.
-3. Run the installer. It installs per-user to `%LOCALAPPDATA%\Programs\Recentry` and does not require administrator privileges.
+## Install the Windows beta
+
+Download assets only from the [`v0.1.0-beta.1` release](https://github.com/sean2077/recentry/releases/tag/v0.1.0-beta.1).
+
+### Installer
+
+1. Download `Recentry-0.1.0-beta.1-windows-x64-setup.exe` and the Windows SHA-256 file.
+2. Verify the installer hash.
+3. Run the installer. It installs per-user to `%LOCALAPPDATA%\Programs\Recentry` without administrator privileges.
 4. Leave **Open Recentry** selected on the final page.
 
-This beta is unsigned, so Windows SmartScreen may show a warning. Verify the SHA-256 checksum before choosing **More info** and **Run anyway**.
+The historical beta is unsigned, so SmartScreen may warn. Verify the checksum before choosing **More info** and **Run anyway**.
 
 ### Portable ZIP
 
 1. Download and extract `Recentry-0.1.0-beta.1-windows-x64.zip`.
-2. Keep `recentry.exe` and `recentry-ui.exe` in the same directory.
-3. Run `recentry.exe`; the project list opens immediately.
+2. Keep `recentry.exe` and `recentry-ui.exe` together.
+3. Run `recentry.exe`.
+
+There are no supported Linux or macOS installation instructions yet. Manually dispatched CI artifacts are explicitly named `unverified-development-*`; they are engineering inputs, not releases.
 
 ## Use
 
-- Press `Ctrl+Alt+R` to open Recentry from anywhere.
-- Type ordinary text to filter the discovered projects.
+- Press `Ctrl+Alt+R` to summon the launcher.
+- Type ordinary text to filter VS Code's recent projects.
 - Use Up and Down to move, Enter to open, and Esc to dismiss.
-- Clicking another window dismisses the launcher automatically.
-- Use the tray menu for **Open Recentry**, **Settings**, **Diagnostics**, or **Quit**.
+- Moving focus to another window dismisses the launcher.
+- Use the Windows tray menu for **Open Recentry**, **Settings**, **Diagnostics**, or **Quit**.
 
-On first run, Recentry asks whether it may start when you sign in. It writes the current-user startup entry only after explicit confirmation. The default hotkey can be changed in **Settings**.
+Each result stays on one compact line: `[VSCode] project-name path`. An empty query preserves VS Code's recent order. Search text is only a filter; it is never treated as a path or command.
 
-Each result stays on one line: `[VSCode] project-name path`. An empty query preserves VS Code's recent order. Search text is only a filter; it is never executed as a path or command.
+The first Windows run asks whether Recentry may start when you sign in. It writes a current-user startup entry only after confirmation. The shortcut, language, startup preference, and stable VS Code override can be changed in Settings.
 
 ## Command line
 
-```powershell
-recentry.exe show
-recentry.exe settings
-recentry.exe diagnostics
-recentry.exe quit
+```text
+recentry show
+recentry settings
+recentry diagnostics
+recentry quit
 ```
 
-Running `recentry.exe` without arguments is equivalent to `recentry.exe show`. The sign-in startup entry uses the internal `--background` option and does not open the launcher at login.
+Running `recentry` without arguments is equivalent to `recentry show`. The internal `--background` option is reserved for login startup and process supervision.
 
 ## VS Code compatibility
 
-- Local folders, `.code-workspace` files, and remote project URIs supported by VS Code.
-- Read-only access to both the application-shared `state.vscdb` and the legacy `globalStorage/state.vscdb` locations.
+- Stable VS Code only; Insiders, Cursor, VSCodium, and other editors are outside this release scope.
+- Local folders, `.code-workspace` files, and supported VS Code remote URIs.
+- Read-only access to application-shared and legacy `state.vscdb` locations.
 - Ordinary recent files are excluded.
-- Already-open projects request focus; other projects explicitly open in a new window.
-- A stable VS Code executable can be selected manually in Settings.
-- VS Code Insiders, Cursor, and other editors are not supported in this beta.
+- Already-open targets request focus; other targets explicitly request a new window.
+- Executables receive argument arrays directly; no shell-composed project command is used.
 
 ## Resources and privacy
 
-The formal Windows 11 x64 release acceptance baseline recorded a 1.043 MiB host Private Working Set, 0% idle CPU, a 4.168 MiB active process tree, and cold/warm popup p95 values of 174.852/88.725 ms over 30 iterations. See the [production acceptance report](docs/performance/2026-07-21-production-windows-acceptance.md) for the complete measurement method.
+The Windows 11 x64 production baseline measured a 1.043 MiB host Private Working Set, 0% idle CPU, a 4.168 MiB active process tree, and cold/warm p95 activation of 174.852/88.725 ms over 30 samples. After the shared-host extraction and final Win32 thread-affinity fix, local regression measurements remained within the fixed gates at 0.746 MiB, 0% idle CPU, a 2.785 MiB active tree, and 160.932/93.065 ms cold/warm p95. See the original [Windows acceptance report](docs/performance/2026-07-21-production-windows-acceptance.md) and the [shared-host regression](docs/performance/2026-07-21-shared-host-regression.md). The new measurements remain local evidence until committed CI/native acceptance is complete.
 
-The final compact UI revision was also regression-checked at a 1.047 MiB host Private Working Set, 0% idle CPU, and a 2.832 MiB active process tree.
-
-Recentry has no telemetry, cloud synchronization, or background network requests. Diagnostics expose configuration hashes and runtime state without project paths. Configuration is stored at `%APPDATA%\Recentry\config.json` and is retained during uninstall so it can be reused after reinstalling; delete that directory manually for a complete reset.
+Recentry has no telemetry, cloud synchronization, or background network requests. Stable VS Code data is read only. Diagnostics hash configuration paths and do not list project paths.
 
 ## Development
 
-Building requires Rust 1.86 or newer and the Windows SDK. Creating the NSIS installer also requires NSIS 3.
+Rust 1.86 is the minimum supported toolchain. Run the full local contract with:
 
-```powershell
+```text
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --workspace --release --locked
 ```
 
-The authoritative Windows packaging commands are:
+Native CI runs the workspace on Windows x64, Linux x86_64/ARM64, and macOS Intel/Apple Silicon. Compilation or hosted CI alone never changes a platform's support status.
 
-```powershell
-pwsh -File tools/package-windows.ps1 -MakeNsis C:\path\to\makensis.exe
-pwsh -File tools/test-windows-package.ps1
+Authoritative development packaging commands are:
+
+```text
+pwsh -File tools/package-windows.ps1
+bash tools/package-linux.sh --development --arch <x86_64|aarch64> --appimagetool <path>
+bash tools/package-macos.sh --development
+bash tools/package-manifest.sh --development
 ```
 
-The packaging command creates the NSIS installer, portable ZIP, and SHA-256 checksum file in `dist/`. It refuses to replace existing artifacts unless `-Force` is passed explicitly. The package smoke test uses `scratch/package-smoke/` and removes the test directory after a successful run.
+Windows packaging requires NSIS 3. Linux packaging requires `dpkg-deb`, `desktop-file-validate`, and a verified `appimagetool`. macOS Universal 2 packaging requires Xcode command-line tools. Native smoke commands live beside their package commands under `tools/`. Release mode fails closed unless the protected native-acceptance and signing inputs are present.
 
-## Architecture
-
-- `recentry.exe`: the single-instance lightweight host for the tray, global hotkey, configuration, IPC, and UI lifecycle.
-- `recentry-ui.exe`: the on-demand Win32 UI for VS Code discovery, search, and project opening; it exits after remaining hidden for 15 minutes.
-- `recentry-core`: portable project models, provider/opener contracts, ranking, and VS Code compatibility logic.
+Read [Architecture](docs/architecture.md), [Troubleshooting](docs/troubleshooting.md), [Release and rollback](docs/release-and-rollback.md), and [Contributing](CONTRIBUTING.md) before changing platform integration or release claims.
 
 License: [MIT](LICENSE).

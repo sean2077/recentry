@@ -1,9 +1,17 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 #![cfg_attr(windows, allow(unsafe_op_in_unsafe_fn))]
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, unix)))]
 fn main() {
-    eprintln!("Recentry v1 supports Windows x64 only.");
+    eprintln!("Recentry is unavailable on this platform.");
+}
+
+#[cfg(unix)]
+mod unix_main;
+
+#[cfg(unix)]
+fn main() {
+    unix_main::run();
 }
 
 #[cfg(windows)]
@@ -14,17 +22,17 @@ mod windows_main {
         mem::zeroed,
         path::{Path, PathBuf},
         ptr::{null, null_mut},
-        sync::{Arc, Mutex, OnceLock, RwLock},
+        sync::{Arc, Mutex, OnceLock},
         thread,
     };
 
     use recentry_host::{
-        ConfigStore, HOTKEY_ID, HostPlatform, UiCoordinator, WM_CONFIG_CHANGED, WM_TRAY,
-        WindowsHostPlatform,
+        ConfigStore, HOTKEY_ID, HostAdapter, HostPlatform, HostRuntime, UiCoordinator,
+        WM_CONFIG_CHANGED, WM_TRAY, WindowsHostPlatform,
     };
-    use recentry_ipc::{PipeServer, request};
+    use recentry_ipc::{LocalServer, current_user_endpoint, request};
     use recentry_protocol::{
-        Config, HOST_PIPE_NAME, HostCommand, HostResponse, Language, UiCommand, UiResponse,
+        Config, HOST_ENDPOINT_ID, HostCommand, HostResponse, Hotkey, Language, UiCommand,
     };
     use windows_sys::Win32::{
         Foundation::{
@@ -53,12 +61,51 @@ mod windows_main {
     static PLATFORM: OnceLock<Mutex<WindowsHostPlatform>> = OnceLock::new();
 
     struct HostContext {
-        store: ConfigStore,
-        config: RwLock<Config>,
+        runtime: HostRuntime,
         ui: UiCoordinator,
-        executable: PathBuf,
+        host_endpoint: String,
         hwnd: isize,
-        hotkey_status: RwLock<String>,
+    }
+
+    struct WindowsRuntimeAdapter {
+        ui: UiCoordinator,
+        hwnd: isize,
+    }
+
+    impl HostAdapter for WindowsRuntimeAdapter {
+        fn request_ui(&self, command: UiCommand) -> Result<recentry_protocol::UiResponse, String> {
+            self.ui.request(command)
+        }
+
+        fn set_autostart(&self, enabled: bool, executable: &Path) -> Result<(), String> {
+            PLATFORM
+                .get()
+                .ok_or_else(|| "Windows platform is not initialized".to_owned())?
+                .lock()
+                .unwrap()
+                .set_autostart(enabled, executable)
+        }
+
+        fn register_hotkey(&self, hotkey: &Hotkey) -> Result<(), String> {
+            PLATFORM
+                .get()
+                .ok_or_else(|| "Windows platform is not initialized".to_owned())?
+                .lock()
+                .unwrap()
+                .register_hotkey(hotkey)
+        }
+
+        fn configuration_changed(&self) {
+            unsafe {
+                PostMessageW(self.hwnd as HWND, WM_CONFIG_CHANGED, 0, 0);
+            }
+        }
+
+        fn notify(&self, title: &str, message: &str, error: bool) {
+            if let Some(platform) = PLATFORM.get() {
+                platform.lock().unwrap().notify(title, message, error);
+            }
+        }
     }
 
     #[derive(Clone, Copy)]
@@ -96,11 +143,15 @@ mod windows_main {
         if requested.opens_ui() {
             unsafe { AllowSetForegroundWindow(ASFW_ANY) };
         }
+        let host_endpoint = match current_user_endpoint(HOST_ENDPOINT_ID) {
+            Ok(endpoint) => endpoint,
+            Err(_) => return,
+        };
         if let Some(command) = requested.command() {
-            if forward_command(&command, 200) {
+            if forward_command(&host_endpoint, &command, 200) {
                 return;
             }
-        } else if request::<_, HostResponse>(HOST_PIPE_NAME, &HostCommand::Ping, 100).is_ok() {
+        } else if request::<_, HostResponse>(&host_endpoint, &HostCommand::Ping, 100).is_ok() {
             return;
         }
 
@@ -111,7 +162,7 @@ mod windows_main {
         }
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             if let Some(command) = requested.command() {
-                let _ = forward_command(&command, 5_000);
+                let _ = forward_command(&host_endpoint, &command, 5_000);
             }
             unsafe { CloseHandle(mutex) };
             return;
@@ -229,18 +280,20 @@ mod windows_main {
         let (ui, ui_worker) = UiCoordinator::start(
             executable.with_file_name("recentry-ui.exe"),
             config_path,
-            HOST_PIPE_NAME.to_owned(),
+            host_endpoint.clone(),
         );
-        let context = Arc::new(HostContext {
-            store,
-            config: RwLock::new(config),
-            ui,
-            executable,
+        let adapter = Arc::new(WindowsRuntimeAdapter {
+            ui: ui.clone(),
             hwnd: hwnd as isize,
-            hotkey_status: RwLock::new(String::new()),
+        });
+        let context = Arc::new(HostContext {
+            runtime: HostRuntime::new(store, config, executable, adapter),
+            ui,
+            host_endpoint,
+            hwnd: hwnd as isize,
         });
         let _ = CONTEXT.set(context.clone());
-        apply_hotkey(&context);
+        context.runtime.apply_hotkey();
 
         if let Some(warning) = startup_warning {
             PLATFORM.get().unwrap().lock().unwrap().notify(
@@ -255,10 +308,10 @@ mod windows_main {
 
         match requested {
             RequestedAction::Show => spawn_ui(UiCommand::Show),
-            RequestedAction::Settings => {
-                spawn_ui(UiCommand::Settings(context.config.read().unwrap().clone()))
+            RequestedAction::Settings => spawn_ui(UiCommand::Settings(context.runtime.config())),
+            RequestedAction::Diagnostics => {
+                spawn_ui(UiCommand::Diagnostics(context.runtime.diagnostics()))
             }
-            RequestedAction::Diagnostics => spawn_ui(UiCommand::Diagnostics(diagnostics(&context))),
             RequestedAction::Quit | RequestedAction::Background | RequestedAction::Invalid => {}
         }
 
@@ -279,7 +332,7 @@ mod windows_main {
     }
 
     fn control_server(context: Arc<HostContext>) {
-        let server = match PipeServer::bind(HOST_PIPE_NAME) {
+        let server = match LocalServer::bind(&context.host_endpoint) {
             Ok(server) => server,
             Err(error) => {
                 PLATFORM.get().unwrap().lock().unwrap().notify(
@@ -303,7 +356,7 @@ mod windows_main {
                 }
             };
             let quitting = matches!(command, HostCommand::Quit);
-            let response = dispatch_host_command(&context, command);
+            let response = context.runtime.dispatch(command);
             let _ = connection.send(&response);
             if quitting {
                 unsafe { PostMessageW(context.hwnd as HWND, WM_CLOSE, 0, 0) };
@@ -312,8 +365,8 @@ mod windows_main {
         }
     }
 
-    fn forward_command(command: &HostCommand, timeout_ms: u32) -> bool {
-        match request::<_, HostResponse>(HOST_PIPE_NAME, command, timeout_ms) {
+    fn forward_command(endpoint: &str, command: &HostCommand, timeout_ms: u32) -> bool {
+        match request::<_, HostResponse>(endpoint, command, timeout_ms) {
             Ok(HostResponse::Error(error)) => {
                 unsafe {
                     MessageBoxW(
@@ -330,102 +383,13 @@ mod windows_main {
         }
     }
 
-    fn dispatch_host_command(context: &Arc<HostContext>, command: HostCommand) -> HostResponse {
-        match command {
-            HostCommand::Ping => HostResponse::Pong,
-            HostCommand::Show => ui_response(context.ui.request(UiCommand::Show)),
-            HostCommand::Settings => ui_response(
-                context
-                    .ui
-                    .request(UiCommand::Settings(context.config.read().unwrap().clone())),
-            ),
-            HostCommand::Diagnostics => ui_response(
-                context
-                    .ui
-                    .request(UiCommand::Diagnostics(diagnostics(context))),
-            ),
-            HostCommand::SaveConfig(config) => save_config(context, config),
-            HostCommand::Quit => HostResponse::Bye,
-        }
-    }
-
-    fn ui_response(response: Result<UiResponse, String>) -> HostResponse {
-        match response {
-            Ok(UiResponse::Error(error)) | Err(error) => HostResponse::Error(error),
-            Ok(_) => HostResponse::Accepted,
-        }
-    }
-
-    fn save_config(context: &Arc<HostContext>, config: Config) -> HostResponse {
-        if let Err(error) = config.validate() {
-            return HostResponse::Error(error);
-        }
-        let previous = context.config.read().unwrap().clone();
-        let update = PLATFORM
-            .get()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .set_autostart(config.autostart, &context.executable)
-            .and_then(|_| {
-                context
-                    .store
-                    .save(&config)
-                    .map_err(|error| error.to_string())
-            });
-        if let Err(error) = update {
-            let _ = PLATFORM
-                .get()
-                .unwrap()
-                .lock()
-                .unwrap()
-                .set_autostart(previous.autostart, &context.executable);
-            return HostResponse::Error(error);
-        }
-        *context.config.write().unwrap() = config;
-        unsafe { PostMessageW(context.hwnd as HWND, WM_CONFIG_CHANGED, 0, 0) };
-        HostResponse::Saved
-    }
-
-    fn apply_hotkey(context: &Arc<HostContext>) {
-        let config = context.config.read().unwrap().clone();
-        let result = PLATFORM
-            .get()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .register_hotkey(&config.hotkey);
-        *context.hotkey_status.write().unwrap() = match &result {
-            Ok(()) => format!("registered {}", config.hotkey.display()),
-            Err(error) => format!("conflict: {error}"),
-        };
-        if let Err(error) = result {
-            PLATFORM.get().unwrap().lock().unwrap().notify(
-                "Recentry hotkey",
-                &format!("{}; use the tray to open Recentry.", error),
-                true,
-            );
-        }
-    }
-
-    fn diagnostics(context: &Arc<HostContext>) -> String {
-        let config = context.config.read().unwrap();
-        format!(
-            "Recentry {}\nHotkey: {}\nAutostart: {}\nConfig: cfg#{}\nTelemetry: disabled\nNetwork: disabled",
-            env!("CARGO_PKG_VERSION"),
-            context.hotkey_status.read().unwrap(),
-            config.autostart,
-            fingerprint(context.store.path()),
-        )
-    }
-
     fn spawn_ui(command: UiCommand) {
         let Some(context) = CONTEXT.get() else {
             return;
         };
-        let ui = context.ui.clone();
+        let context = context.clone();
         thread::spawn(move || {
-            if let Err(error) = ui.request(command) {
+            if let Err(error) = context.runtime.request_ui(command) {
                 if let Some(platform) = PLATFORM.get() {
                     platform.lock().unwrap().notify("Recentry UI", &error, true);
                 }
@@ -440,6 +404,12 @@ mod windows_main {
         lparam: LPARAM,
     ) -> LRESULT {
         match message {
+            WM_CONFIG_CHANGED => {
+                if let Some(context) = CONTEXT.get() {
+                    context.runtime.apply_hotkey();
+                }
+                0
+            }
             WM_HOTKEY if wparam == HOTKEY_ID as usize => {
                 spawn_ui(UiCommand::Show);
                 0
@@ -450,12 +420,6 @@ mod windows_main {
                     spawn_ui(UiCommand::Show);
                 } else if event == WM_RBUTTONUP {
                     show_tray_menu(hwnd);
-                }
-                0
-            }
-            WM_CONFIG_CHANGED => {
-                if let Some(context) = CONTEXT.get() {
-                    apply_hotkey(context);
                 }
                 0
             }
@@ -474,7 +438,7 @@ mod windows_main {
     unsafe fn show_tray_menu(hwnd: HWND) {
         let chinese = CONTEXT
             .get()
-            .is_some_and(|context| uses_chinese(&context.config.read().unwrap()));
+            .is_some_and(|context| uses_chinese(&context.runtime.config()));
         let labels = if chinese {
             ["打开 Recentry", "设置", "诊断", "退出"]
         } else {
@@ -503,12 +467,12 @@ mod windows_main {
             MENU_OPEN => spawn_ui(UiCommand::Show),
             MENU_SETTINGS => {
                 if let Some(context) = CONTEXT.get() {
-                    spawn_ui(UiCommand::Settings(context.config.read().unwrap().clone()));
+                    spawn_ui(UiCommand::Settings(context.runtime.config()));
                 }
             }
             MENU_DIAGNOSTICS => {
                 if let Some(context) = CONTEXT.get() {
-                    spawn_ui(UiCommand::Diagnostics(diagnostics(context)));
+                    spawn_ui(UiCommand::Diagnostics(context.runtime.diagnostics()));
                 }
             }
             MENU_QUIT => {
@@ -554,16 +518,6 @@ mod windows_main {
             Language::En => false,
             Language::System => unsafe { GetUserDefaultUILanguage() & 0x03ff == 0x0004 },
         }
-    }
-
-    fn fingerprint(path: &Path) -> String {
-        let hash = path
-            .to_string_lossy()
-            .bytes()
-            .fold(0xcbf29ce484222325u64, |hash, byte| {
-                (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3)
-            });
-        format!("{hash:016x}")
     }
 
     fn wide(value: &str) -> Vec<u16> {

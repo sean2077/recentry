@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Recentry
+Comment=Open recent development projects
+Exec=recentry show
+Icon=recentry
+Terminal=false
+Categories=Development;Utility;
+StartupNotify=true

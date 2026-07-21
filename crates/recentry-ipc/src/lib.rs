@@ -1,4 +1,7 @@
-//! Current-user named-pipe transport for Recentry host/UI messages.
+//! Current-user local transport for Recentry host/UI messages.
+//!
+//! Windows uses named pipes. Unix platforms use owner-only Unix-domain
+//! sockets and verify the peer user where the operating system supports it.
 //!
 //! Each connection has one request/response owner. The synchronous handle must
 //! not be cloned for concurrent reads and writes; doing so can deadlock.
@@ -11,12 +14,114 @@ pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub enum IpcError {
     #[error("IPC is unsupported on this platform")]
     Unsupported,
+    #[error("invalid current-user endpoint: {0}")]
+    InvalidEndpoint(String),
     #[error("message exceeds the IPC limit")]
     MessageTooLarge,
     #[error("{operation} failed with Windows error {code}")]
     Windows { operation: &'static str, code: u32 },
+    #[error("{operation} failed: {source}")]
+    Io {
+        operation: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("protocol encoding failed: {0}")]
     Protocol(#[from] serde_json::Error),
+}
+
+pub fn current_user_endpoint(id: &str) -> Result<String, IpcError> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(IpcError::InvalidEndpoint(
+            "the id must contain 1-64 ASCII letters, digits, hyphens, or underscores".to_owned(),
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        return Ok(format!(r"\\.\pipe\{id}"));
+    }
+
+    #[cfg(unix)]
+    {
+        use std::{env, os::unix::ffi::OsStrExt, path::PathBuf};
+
+        let uid = unsafe { libc::geteuid() };
+        let runtime_root = env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute());
+        let directory = if let Some(root) = runtime_root {
+            root.join("recentry")
+        } else {
+            PathBuf::from("/tmp").join(format!("recentry-{uid}"))
+        };
+        ensure_private_directory(&directory, uid)?;
+        let endpoint = directory.join(format!("{id}.sock"));
+        if endpoint.as_os_str().as_bytes().len() > 100 {
+            return Err(IpcError::InvalidEndpoint(
+                "the Unix socket path exceeds 100 bytes".to_owned(),
+            ));
+        }
+        return Ok(endpoint.to_string_lossy().into_owned());
+    }
+
+    #[allow(unreachable_code)]
+    Err(IpcError::Unsupported)
+}
+
+#[cfg(unix)]
+fn ensure_private_directory(path: &std::path::Path, uid: u32) -> Result<(), IpcError> {
+    use std::{
+        fs,
+        os::unix::fs::{MetadataExt, PermissionsExt},
+    };
+
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() || metadata.uid() != uid {
+                return Err(IpcError::InvalidEndpoint(
+                    "the runtime directory is not an owner-controlled directory".to_owned(),
+                ));
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(path).map_err(|source| IpcError::Io {
+                operation: "create runtime directory",
+                source,
+            })?;
+        }
+        Err(source) => {
+            return Err(IpcError::Io {
+                operation: "inspect runtime directory",
+                source,
+            });
+        }
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|source| {
+        IpcError::Io {
+            operation: "secure runtime directory",
+            source,
+        }
+    })?;
+    let metadata = fs::symlink_metadata(path).map_err(|source| IpcError::Io {
+        operation: "verify runtime directory",
+        source,
+    })?;
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.uid() != uid
+        || metadata.mode() & 0o077 != 0
+    {
+        return Err(IpcError::InvalidEndpoint(
+            "the runtime directory permissions are not owner-only".to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -274,7 +379,355 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+mod platform {
+    use std::{
+        cell::Cell,
+        fs,
+        io::{Read, Write},
+        marker::PhantomData,
+        os::unix::{
+            ffi::OsStrExt,
+            fs::{FileTypeExt, MetadataExt, PermissionsExt},
+            io::AsRawFd,
+            net::{UnixListener, UnixStream},
+        },
+        path::{Path, PathBuf},
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use serde::{Serialize, de::DeserializeOwned};
+
+    use super::{IpcError, MAX_MESSAGE_BYTES, ensure_private_directory};
+
+    pub struct PipeServer {
+        listener: UnixListener,
+        path: PathBuf,
+        device: u64,
+        inode: u64,
+    }
+
+    pub struct PipeConnection {
+        stream: UnixStream,
+        _not_sync: PhantomData<Cell<()>>,
+    }
+
+    impl Drop for PipeServer {
+        fn drop(&mut self) {
+            if let Ok(metadata) = fs::symlink_metadata(&self.path) {
+                if metadata.file_type().is_socket()
+                    && metadata.dev() == self.device
+                    && metadata.ino() == self.inode
+                {
+                    let _ = fs::remove_file(&self.path);
+                }
+            }
+        }
+    }
+
+    impl PipeServer {
+        pub fn bind(name: &str) -> Result<Self, IpcError> {
+            let path = PathBuf::from(name);
+            if !path.is_absolute() || path.as_os_str().as_bytes().len() > 100 {
+                return Err(IpcError::InvalidEndpoint(
+                    "a Unix endpoint must be an absolute path of at most 100 bytes".to_owned(),
+                ));
+            }
+            let parent = path.parent().ok_or_else(|| {
+                IpcError::InvalidEndpoint("the Unix endpoint has no parent directory".to_owned())
+            })?;
+            ensure_private_directory(parent, unsafe { libc::geteuid() })?;
+            let listener = bind_listener(&path)?;
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(|source| {
+                IpcError::Io {
+                    operation: "secure Unix socket",
+                    source,
+                }
+            })?;
+            let metadata = fs::symlink_metadata(&path).map_err(|source| IpcError::Io {
+                operation: "inspect Unix socket",
+                source,
+            })?;
+            if !metadata.file_type().is_socket()
+                || metadata.uid() != unsafe { libc::geteuid() }
+                || metadata.mode() & 0o077 != 0
+            {
+                let _ = fs::remove_file(&path);
+                return Err(IpcError::InvalidEndpoint(
+                    "the Unix socket is not owner-only".to_owned(),
+                ));
+            }
+            Ok(Self {
+                listener,
+                path,
+                device: metadata.dev(),
+                inode: metadata.ino(),
+            })
+        }
+
+        pub fn accept(&self) -> Result<PipeConnection, IpcError> {
+            let (stream, _) = self.listener.accept().map_err(|source| IpcError::Io {
+                operation: "accept Unix socket",
+                source,
+            })?;
+            verify_peer(&stream)?;
+            Ok(PipeConnection {
+                stream,
+                _not_sync: PhantomData,
+            })
+        }
+    }
+
+    impl PipeConnection {
+        pub fn send<T: Serialize>(&self, message: &T) -> Result<(), IpcError> {
+            let payload = serde_json::to_vec(message)?;
+            if payload.len() > MAX_MESSAGE_BYTES {
+                return Err(IpcError::MessageTooLarge);
+            }
+            let mut stream = &self.stream;
+            stream
+                .write_all(&(payload.len() as u32).to_le_bytes())
+                .and_then(|()| stream.write_all(&payload))
+                .map_err(|source| IpcError::Io {
+                    operation: "write Unix socket",
+                    source,
+                })
+        }
+
+        pub fn receive<T: DeserializeOwned>(&self) -> Result<T, IpcError> {
+            let mut stream = &self.stream;
+            let mut length = [0u8; 4];
+            stream
+                .read_exact(&mut length)
+                .map_err(|source| IpcError::Io {
+                    operation: "read Unix socket frame",
+                    source,
+                })?;
+            let length = u32::from_le_bytes(length) as usize;
+            if length > MAX_MESSAGE_BYTES {
+                return Err(IpcError::MessageTooLarge);
+            }
+            let mut payload = vec![0u8; length];
+            stream
+                .read_exact(&mut payload)
+                .map_err(|source| IpcError::Io {
+                    operation: "read Unix socket payload",
+                    source,
+                })?;
+            Ok(serde_json::from_slice(&payload)?)
+        }
+    }
+
+    pub fn connect(name: &str, timeout_ms: u32) -> Result<PipeConnection, IpcError> {
+        let path = Path::new(name);
+        if !path.is_absolute() || path.as_os_str().as_bytes().len() > 100 {
+            return Err(IpcError::InvalidEndpoint(
+                "a Unix endpoint must be an absolute path of at most 100 bytes".to_owned(),
+            ));
+        }
+        let started = Instant::now();
+        let timeout = Duration::from_millis(u64::from(timeout_ms));
+        loop {
+            match verify_socket_path(path) {
+                Ok(()) => {}
+                Err(IpcError::Io { source, .. })
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    if started.elapsed() >= timeout {
+                        return Err(IpcError::Io {
+                            operation: "connect Unix socket",
+                            source: std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "connection timed out",
+                            ),
+                        });
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+            match UnixStream::connect(path) {
+                Ok(stream) => {
+                    verify_peer(&stream)?;
+                    let io_timeout = timeout.max(Duration::from_millis(1));
+                    stream
+                        .set_read_timeout(Some(io_timeout))
+                        .map_err(|source| IpcError::Io {
+                            operation: "set Unix socket read timeout",
+                            source,
+                        })?;
+                    stream
+                        .set_write_timeout(Some(io_timeout))
+                        .map_err(|source| IpcError::Io {
+                            operation: "set Unix socket write timeout",
+                            source,
+                        })?;
+                    return Ok(PipeConnection {
+                        stream,
+                        _not_sync: PhantomData,
+                    });
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    if started.elapsed() >= timeout {
+                        return Err(IpcError::Io {
+                            operation: "connect Unix socket",
+                            source: std::io::Error::new(
+                                std::io::ErrorKind::TimedOut,
+                                "connection timed out",
+                            ),
+                        });
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+                Err(source) => {
+                    return Err(IpcError::Io {
+                        operation: "connect Unix socket",
+                        source,
+                    });
+                }
+            }
+        }
+    }
+
+    fn bind_listener(path: &Path) -> Result<UnixListener, IpcError> {
+        match UnixListener::bind(path) {
+            Ok(listener) => Ok(listener),
+            Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                recover_stale_endpoint(path)?;
+                UnixListener::bind(path).map_err(|source| IpcError::Io {
+                    operation: "bind Unix socket",
+                    source,
+                })
+            }
+            Err(source) => Err(IpcError::Io {
+                operation: "bind Unix socket",
+                source,
+            }),
+        }
+    }
+
+    fn recover_stale_endpoint(path: &Path) -> Result<(), IpcError> {
+        let metadata = fs::symlink_metadata(path).map_err(|source| IpcError::Io {
+            operation: "inspect occupied Unix endpoint",
+            source,
+        })?;
+        if metadata.file_type().is_symlink()
+            || !metadata.file_type().is_socket()
+            || metadata.uid() != unsafe { libc::geteuid() }
+        {
+            return Err(IpcError::InvalidEndpoint(
+                "the occupied Unix endpoint is not an owner-controlled socket".to_owned(),
+            ));
+        }
+        match UnixStream::connect(path) {
+            Ok(_) => Err(IpcError::Io {
+                operation: "bind Unix socket",
+                source: std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    "another Recentry process owns the endpoint",
+                ),
+            }),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionRefused | std::io::ErrorKind::NotFound
+                ) =>
+            {
+                fs::remove_file(path).map_err(|source| IpcError::Io {
+                    operation: "remove stale Unix socket",
+                    source,
+                })
+            }
+            Err(source) => Err(IpcError::Io {
+                operation: "probe occupied Unix endpoint",
+                source,
+            }),
+        }
+    }
+
+    fn verify_socket_path(path: &Path) -> Result<(), IpcError> {
+        let metadata = fs::symlink_metadata(path).map_err(|source| IpcError::Io {
+            operation: "inspect Unix socket peer",
+            source,
+        })?;
+        if metadata.file_type().is_symlink()
+            || !metadata.file_type().is_socket()
+            || metadata.uid() != unsafe { libc::geteuid() }
+            || metadata.mode() & 0o077 != 0
+        {
+            return Err(IpcError::InvalidEndpoint(
+                "the Unix socket peer is not owned exclusively by the current user".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn verify_peer(stream: &UnixStream) -> Result<(), IpcError> {
+        let mut credentials = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        let result = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut credentials as *mut libc::ucred).cast(),
+                &mut length,
+            )
+        };
+        if result != 0 {
+            return Err(IpcError::Io {
+                operation: "read Unix peer credentials",
+                source: std::io::Error::last_os_error(),
+            });
+        }
+        if credentials.uid != unsafe { libc::geteuid() } {
+            return Err(IpcError::InvalidEndpoint(
+                "the Unix socket peer belongs to another user".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn verify_peer(stream: &UnixStream) -> Result<(), IpcError> {
+        let mut uid = 0;
+        let mut gid = 0;
+        let result = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
+        if result != 0 {
+            return Err(IpcError::Io {
+                operation: "read Unix peer credentials",
+                source: std::io::Error::last_os_error(),
+            });
+        }
+        if uid != unsafe { libc::geteuid() } {
+            return Err(IpcError::InvalidEndpoint(
+                "the Unix socket peer belongs to another user".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    fn verify_peer(_stream: &UnixStream) -> Result<(), IpcError> {
+        Ok(())
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
 mod platform {
     use serde::{Serialize, de::DeserializeOwned};
 
@@ -310,6 +763,13 @@ mod platform {
 
 pub use platform::{PipeConnection, PipeServer, connect};
 
+pub type LocalConnection = PipeConnection;
+pub type LocalServer = PipeServer;
+
+pub fn connect_local(endpoint: &str, timeout_ms: u32) -> Result<LocalConnection, IpcError> {
+    connect(endpoint, timeout_ms)
+}
+
 pub fn request<Req: Serialize, Resp: DeserializeOwned>(
     name: &str,
     request: &Req,
@@ -327,6 +787,33 @@ mod tests {
     use recentry_protocol::{HostCommand, HostResponse};
 
     use super::*;
+
+    #[test]
+    fn current_user_endpoint_is_validated_and_platform_scoped() {
+        assert_eq!(
+            current_user_endpoint("recentry-host-v1").unwrap(),
+            r"\\.\pipe\recentry-host-v1"
+        );
+        assert!(current_user_endpoint("../other-user").is_err());
+        assert!(current_user_endpoint("").is_err());
+    }
+
+    #[test]
+    fn local_transport_names_expose_the_platform_adapter() {
+        let name = test_pipe("local-alias");
+        let server = LocalServer::bind(&name).unwrap();
+        let worker = thread::spawn(move || {
+            let connection: LocalConnection = server.accept().unwrap();
+            assert_eq!(
+                connection.receive::<HostCommand>().unwrap(),
+                HostCommand::Ping
+            );
+            connection.send(&HostResponse::Pong).unwrap();
+        });
+        let response = request::<_, HostResponse>(&name, &HostCommand::Ping, 5_000).unwrap();
+        assert_eq!(response, HostResponse::Pong);
+        worker.join().unwrap();
+    }
 
     fn test_pipe(label: &str) -> String {
         format!(r"\\.\pipe\recentry-ipc-test-{}-{label}", process::id())
@@ -361,6 +848,79 @@ mod tests {
             ));
         });
         let _client = connect(&name, 5_000).unwrap();
+        worker.join().unwrap();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod unix_tests {
+    use std::{
+        fs,
+        os::unix::{fs::PermissionsExt, net::UnixListener},
+        path::Path,
+        process, thread,
+    };
+
+    use recentry_protocol::{HostCommand, HostResponse};
+
+    use super::*;
+
+    fn test_endpoint(label: &str) -> String {
+        current_user_endpoint(&format!("recentry-ipc-{}-{label}", process::id())).unwrap()
+    }
+
+    #[test]
+    fn owner_only_socket_round_trips_and_is_removed_on_drop() {
+        let endpoint = test_endpoint("roundtrip");
+        let server = LocalServer::bind(&endpoint).unwrap();
+        assert_eq!(
+            fs::metadata(Path::new(&endpoint))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        let worker = thread::spawn(move || {
+            let connection = server.accept().unwrap();
+            assert_eq!(
+                connection.receive::<HostCommand>().unwrap(),
+                HostCommand::Ping
+            );
+            connection.send(&HostResponse::Pong).unwrap();
+        });
+        let response = request::<_, HostResponse>(&endpoint, &HostCommand::Ping, 5_000).unwrap();
+        assert_eq!(response, HostResponse::Pong);
+        worker.join().unwrap();
+        assert!(!Path::new(&endpoint).exists());
+    }
+
+    #[test]
+    fn stale_owner_socket_is_recovered_but_active_socket_is_rejected() {
+        let endpoint = test_endpoint("stale");
+        let stale = UnixListener::bind(&endpoint).unwrap();
+        drop(stale);
+        assert!(Path::new(&endpoint).exists());
+
+        let server = LocalServer::bind(&endpoint).unwrap();
+        assert!(LocalServer::bind(&endpoint).is_err());
+        drop(server);
+        assert!(!Path::new(&endpoint).exists());
+    }
+
+    #[test]
+    fn unix_transport_rejects_relative_and_oversized_messages() {
+        assert!(LocalServer::bind("relative.sock").is_err());
+        let endpoint = test_endpoint("oversized");
+        let server = LocalServer::bind(&endpoint).unwrap();
+        let worker = thread::spawn(move || {
+            let connection = server.accept().unwrap();
+            assert!(matches!(
+                connection.send(&"x".repeat(MAX_MESSAGE_BYTES + 1)),
+                Err(IpcError::MessageTooLarge)
+            ));
+        });
+        let _connection = connect_local(&endpoint, 5_000).unwrap();
         worker.join().unwrap();
     }
 }

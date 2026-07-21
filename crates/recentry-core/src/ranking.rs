@@ -2,12 +2,35 @@ use std::collections::HashSet;
 
 use crate::{ProjectTarget, RecentProject};
 
-pub fn deduplicate(mut projects: Vec<RecentProject>) -> Vec<RecentProject> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetIdentityPolicy {
+    CaseInsensitiveAscii,
+    CaseSensitive,
+}
+
+impl TargetIdentityPolicy {
+    pub const fn current() -> Self {
+        if cfg!(target_os = "windows") {
+            Self::CaseInsensitiveAscii
+        } else {
+            Self::CaseSensitive
+        }
+    }
+}
+
+pub fn deduplicate(projects: Vec<RecentProject>) -> Vec<RecentProject> {
+    deduplicate_with_policy(projects, TargetIdentityPolicy::current())
+}
+
+pub fn deduplicate_with_policy(
+    mut projects: Vec<RecentProject>,
+    policy: TargetIdentityPolicy,
+) -> Vec<RecentProject> {
     projects.sort_by_key(|project| project.recent_index);
     let mut seen = HashSet::with_capacity(projects.len());
     projects
         .into_iter()
-        .filter(|project| seen.insert(target_key(&project.target)))
+        .filter(|project| seen.insert(target_key_with_policy(&project.target, policy)))
         .collect()
 }
 
@@ -33,13 +56,20 @@ pub fn search_projects(projects: &[RecentProject], query: &str) -> Vec<RecentPro
 }
 
 pub fn target_key(target: &ProjectTarget) -> String {
+    target_key_with_policy(target, TargetIdentityPolicy::current())
+}
+
+pub fn target_key_with_policy(target: &ProjectTarget, policy: TargetIdentityPolicy) -> String {
     match target {
         ProjectTarget::LocalPath(path) => {
-            let normalized = path
+            let mut normalized = path
                 .to_string_lossy()
                 .replace('\\', "/")
                 .trim_end_matches('/')
-                .to_lowercase();
+                .to_owned();
+            if matches!(policy, TargetIdentityPolicy::CaseInsensitiveAscii) {
+                normalized.make_ascii_lowercase();
+            }
             format!("path:{normalized}")
         }
         ProjectTarget::Uri(uri) => format!("uri:{}", uri.trim_end_matches('/')),

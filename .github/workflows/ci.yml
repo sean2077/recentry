@@ -8,8 +8,9 @@ permissions:
   contents: read
 
 jobs:
-  windows-beta:
-    runs-on: windows-latest
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.86.0
@@ -29,19 +30,36 @@ jobs:
       - name: Package smoke test
         shell: pwsh
         run: tools/test-windows-package.ps1
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: recentry-windows-x64
           path: dist/*
           if-no-files-found: error
 
-  portable-core:
+  native-workspace:
+    name: Native workspace (${{ matrix.label }})
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - label: Linux x64
+            os: ubuntu-24.04
+          - label: Linux ARM64
+            os: ubuntu-24.04-arm
+          - label: macOS Apple Silicon
+            os: macos-15
+          - label: macOS Intel
+            os: macos-15-intel
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.86.0
-      - name: Compile and test portable core
-        run: cargo test -p recentry-core -p recentry-protocol --locked
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --locked

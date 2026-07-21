@@ -39,6 +39,9 @@ $configRoot = Join-Path $appDataRoot 'Recentry'
 $configPath = Join-Path $configRoot 'config.json'
 $uninstallKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Recentry'
 $shortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Recentry.lnk'
+if ((Test-Path -LiteralPath $uninstallKey) -or (Test-Path -LiteralPath $shortcutPath)) {
+    throw 'Package smoke tests refuse to replace an existing per-user Recentry installation or shortcut.'
+}
 
 function Invoke-Process([string]$file, [string]$arguments, [hashtable]$environment = @{}) {
     $start = [Diagnostics.ProcessStartInfo]::new()

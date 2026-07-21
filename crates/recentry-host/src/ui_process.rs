@@ -1,16 +1,20 @@
 use std::{
-    os::windows::process::CommandExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
 
-use recentry_ipc::{PipeConnection, PipeServer, connect};
+use recentry_ipc::{LocalConnection, LocalServer, connect_local, current_user_endpoint};
 use recentry_protocol::{UiCommand, UiResponse};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 enum CoordinatorRequest {
@@ -23,7 +27,7 @@ enum CoordinatorRequest {
 
 struct UiConnection {
     child: Child,
-    pipe: PipeConnection,
+    pipe: LocalConnection,
 }
 
 #[derive(Clone)]
@@ -122,7 +126,7 @@ fn grant_foreground(connection: &UiConnection, command: &UiCommand) {
         command,
         UiCommand::Show | UiCommand::Settings(_) | UiCommand::Diagnostics(_)
     ) {
-        unsafe { AllowSetForegroundWindow(connection.child.id()) };
+        allow_child_foreground(&connection.child);
     }
 }
 
@@ -142,29 +146,41 @@ fn child_exited(connection: &mut Option<UiConnection>) -> bool {
 }
 
 fn start_ui(
-    executable: &PathBuf,
-    config_path: &PathBuf,
+    executable: &Path,
+    config_path: &Path,
     host_pipe: &str,
     generation: u32,
 ) -> Result<UiConnection, String> {
     if !executable.is_file() {
-        return Err("recentry-ui.exe is missing beside the host".to_owned());
+        return Err(format!(
+            "{} is missing beside the host",
+            executable
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("recentry-ui")
+        ));
     }
-    let pipe_name = format!(r"\\.\pipe\recentry-ui-{}-{generation}", std::process::id());
-    let server = PipeServer::bind(&pipe_name).map_err(|error| error.to_string())?;
-    let mut child = Command::new(executable)
+    let endpoint = ui_endpoint(generation)?;
+    let server = LocalServer::bind(&endpoint).map_err(|error| error.to_string())?;
+    let mut command = Command::new(executable);
+    command
         .arg("--pipe")
-        .arg(&pipe_name)
+        .arg(&endpoint)
         .arg("--host-pipe")
         .arg(host_pipe)
         .arg("--config")
-        .arg(config_path)
-        .creation_flags(CREATE_NO_WINDOW)
+        .arg(config_path);
+    configure_ui_child(&mut command);
+    let executable_label = executable
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("recentry-ui");
+    let mut child = command
         .spawn()
-        .map_err(|error| format!("failed to start recentry-ui.exe: {error}"))?;
+        .map_err(|error| format!("failed to start {executable_label}: {error}"))?;
 
     let (accepted, receiver) = mpsc::channel();
-    let accept_pipe_name = pipe_name.clone();
+    let accept_endpoint = endpoint.clone();
     let acceptor = thread::spawn(move || {
         let result = server.accept().map_err(|error| error.to_string());
         let _ = accepted.send(result);
@@ -180,14 +196,37 @@ fn start_ui(
         Err(_) => {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = connect(&accept_pipe_name, 100);
+            let _ = connect_local(&accept_endpoint, 100);
             let _ = acceptor.join();
-            return Err("recentry-ui.exe did not connect within 5 seconds".to_owned());
+            return Err(format!(
+                "{executable_label} did not connect within 5 seconds"
+            ));
         }
     };
     let _ = acceptor.join();
     Ok(UiConnection { child, pipe })
 }
+
+fn ui_endpoint(generation: u32) -> Result<String, String> {
+    current_user_endpoint(&format!("recentry-ui-{}-{generation}", std::process::id()))
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(windows)]
+fn configure_ui_child(command: &mut Command) {
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn configure_ui_child(_command: &mut Command) {}
+
+#[cfg(windows)]
+fn allow_child_foreground(child: &Child) {
+    unsafe { AllowSetForegroundWindow(child.id()) };
+}
+
+#[cfg(not(windows))]
+fn allow_child_foreground(_child: &Child) {}
 
 fn transact(connection: &UiConnection, command: &UiCommand) -> Result<UiResponse, String> {
     connection
@@ -212,4 +251,24 @@ fn stop_ui(connection: &mut Option<UiConnection>) {
     let _ = ui.child.kill();
     let _ = ui.child.wait();
     *connection = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_endpoint_is_current_user_scoped() {
+        let endpoint = ui_endpoint(7).unwrap();
+        assert!(endpoint.contains(&format!("recentry-ui-{}-7", std::process::id())));
+    }
+
+    #[test]
+    fn visible_commands_restart_after_a_broken_ui() {
+        assert!(should_restart(&UiCommand::Show));
+        assert!(should_restart(&UiCommand::Settings(Default::default())));
+        assert!(should_restart(&UiCommand::Diagnostics(String::new())));
+        assert!(!should_restart(&UiCommand::Hide));
+        assert!(!should_restart(&UiCommand::Quit));
+    }
 }

@@ -2,12 +2,28 @@
 param(
     [switch]$SkipBuild,
     [switch]$Force,
-    [string]$MakeNsis
+    [switch]$Release,
+    [string]$MakeNsis,
+    [string]$SignTool,
+    [string]$SigningThumbprint,
+    [string]$TimestampUrl = 'http://timestamp.digicert.com'
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') {
     throw 'Windows packaging must run on Windows.'
+}
+if ($Release -and $env:RECENTRY_NATIVE_ACCEPTANCE -ne 'green') {
+    throw 'Release packaging requires RECENTRY_NATIVE_ACCEPTANCE=green from the protected acceptance job.'
+}
+if ($Release -and ([string]::IsNullOrWhiteSpace($SignTool) -or [string]::IsNullOrWhiteSpace($SigningThumbprint))) {
+    throw 'Release packaging requires -SignTool and -SigningThumbprint.'
+}
+if ([string]::IsNullOrWhiteSpace($SignTool) -xor [string]::IsNullOrWhiteSpace($SigningThumbprint)) {
+    throw '-SignTool and -SigningThumbprint must be provided together.'
+}
+if (-not [string]::IsNullOrWhiteSpace($SignTool) -and -not (Test-Path -LiteralPath $SignTool -PathType Leaf)) {
+    throw "signtool.exe was not found: $SignTool"
 }
 
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -91,6 +107,17 @@ foreach ($document in @('README.md', 'CHANGELOG.md', 'LICENSE')) {
     Copy-Item -LiteralPath (Join-Path $workspace $document) -Destination (Join-Path $staging $document)
 }
 
+function Invoke-AuthenticodeSign([string]$path) {
+    if ([string]::IsNullOrWhiteSpace($SignTool)) { return }
+    & $SignTool sign /fd SHA256 /sha1 $SigningThumbprint /tr $TimestampUrl /td SHA256 $path
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed: $path" }
+    & $SignTool verify /pa /all $path
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed: $path" }
+}
+
+Invoke-AuthenticodeSign (Join-Path $staging 'recentry.exe')
+Invoke-AuthenticodeSign (Join-Path $staging 'recentry-ui.exe')
+
 foreach ($path in $existing) { Remove-Item -LiteralPath $path -Force }
 Compress-Archive -Path (Join-Path $staging '*') -DestinationPath $zipPath -CompressionLevel Optimal
 
@@ -99,6 +126,7 @@ $installerScript = Join-Path $workspace 'packaging\windows\installer.nsi'
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     throw 'NSIS packaging failed.'
 }
+Invoke-AuthenticodeSign $installerPath
 
 $checksumLines = foreach ($path in @($installerPath, $zipPath)) {
     $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -106,6 +134,7 @@ $checksumLines = foreach ($path in @($installerPath, $zipPath)) {
 }
 [IO.File]::WriteAllLines($checksumPath, $checksumLines, [Text.UTF8Encoding]::new($false))
 
-Write-Output "Created Recentry $version Windows x64 artifacts:"
+$mode = if ($Release) { 'release' } else { 'development' }
+Write-Output "Created Recentry $version Windows x64 $mode artifacts:"
 Get-Item -LiteralPath $installerPath, $zipPath, $checksumPath |
     Select-Object Name, Length, FullName

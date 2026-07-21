@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Add platform-aware stable VS Code discovery and path identity for Windows, Linux, and macOS fixtures.
+- Add owner-only Unix-domain-socket IPC with stale-endpoint recovery, bounded framing, and peer-user verification.
+- Extract shared host command/configuration behavior and cross-platform UI-child supervision while preserving Win32 event-thread shortcut registration.
+- Add a Unix development host and XDG autostart support; native Linux shortcuts/status UI and macOS AppKit integration remain blocked by native gates.
+- Add fail-closed Linux DEB/AppImage, macOS Universal 2 app ZIP/DMG, Authenticode, notarization, checksum, and native smoke command contracts for unverified development packaging.
+- Expand native CI and add English platform-status, architecture, troubleshooting, security, contribution, release, and rollback documentation.
+- Keep Linux and macOS public support explicitly `in development`; no new supported release is created by these changes.
+
 ## 0.1.0-beta.1 — 2026-07-21
 
 - Publish the first Windows x64 beta.

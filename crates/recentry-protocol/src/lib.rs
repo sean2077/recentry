@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 1;
+pub const HOST_ENDPOINT_ID: &str = "recentry-host-v1";
 pub const HOST_PIPE_NAME: &str = r"\\.\pipe\recentry-host-v1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

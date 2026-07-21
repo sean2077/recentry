@@ -342,6 +342,7 @@ dependencies = [
 name = "recentry-ipc"
 version = "0.1.0-beta.1"
 dependencies = [
+ "libc",
  "recentry-protocol",
  "serde",
  "serde_json",

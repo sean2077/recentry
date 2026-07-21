@@ -1,5 +1,7 @@
 # Recentry v1 Windows-first implementation
 
+> Historical record for the `v0.1.0-beta.1` Windows beta. The active plan is [Recentry Cross-Platform v1](cross-platform-implementation-plan.md); this file does not describe current Linux or macOS support.
+
 Goal: deliver a Windows x64 beta of Recentry that opens or focuses VS Code recent projects while meeting the agreed process-tree memory, CPU, and activation-latency budgets.
 
 ### Slice `gate` — choose a UI technology from measured Windows evidence
