@@ -2,6 +2,20 @@
 
 The first cross-platform release is an atomic distribution set. Windows NSIS/ZIP, Linux x86_64 and ARM64 DEB/AppImage, macOS Universal 2 app ZIP/DMG, the complete SHA-256 manifest, platform signatures, native package smoke, resource evidence, and real graphical acceptance must all be green together.
 
+## Platform-scoped Windows beta track
+
+By explicit owner decision on 2026-07-21, numbered `v0.1.0-beta.N` releases may advance independently as Windows-only previews. They do not satisfy or weaken the first supported cross-platform release contract.
+
+A Windows beta promotion requires:
+
+1. The release commit passes the complete native CI matrix.
+2. The current Win32 implementation remains within its Windows 11 resource and activation gates, and the installer/portable lifecycle smoke passes.
+3. `tools/package-windows.ps1 -WindowsBeta -WindowsBetaAcceptanceReport <path>` verifies all five fixed gates in a reviewed report under `docs/performance` before packaging.
+4. The GitHub release is marked as a prerelease and contains only the Windows x64 NSIS installer, portable ZIP, and Windows SHA-256 file.
+5. Release notes state that the binaries are unsigned, Windows 10 real-machine acceptance is pending, and Linux/macOS remain unsupported development targets.
+
+Withdrawing a Windows beta removes it from normal download promotion while preserving its tag, changelog, checksums, and evidence. It does not change the cross-platform support claim.
+
 ## Development artifacts
 
 The manually dispatched `Unverified development packages` workflow builds and smoke-checks package structure on native hosted runners. Every artifact name contains `unverified-development`. These outputs may validate a packaging change but do not prove shortcuts, status items, focus, real desktop behavior, resources, publisher trust, or support.
@@ -16,7 +30,7 @@ Release mode is fail-closed:
 4. The distribution manifest refuses any missing mandatory asset and requires an OpenPGP signing key.
 5. A protected publication job must verify every signature and checksum again before creating a GitHub release.
 
-No release publication job is enabled while the native UI/prototype, credential, and real-machine gates remain incomplete.
+No cross-platform release publication job is enabled while the native UI/prototype, credential, and real-machine gates remain incomplete. The separately scoped Windows beta is published directly to the established GitHub prerelease surface after its narrower gates pass.
 
 ## Atomic rollback rehearsal
 

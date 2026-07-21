@@ -6,14 +6,16 @@ Recentry uses an evidence-gated support model. A platform is supported only when
 
 | Target | Core and IPC | Native host/UI | Packages | Trust | Real GUI acceptance | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Windows 10 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | Historical beta unsigned | Not available locally | Beta scope not fully revalidated |
-| Windows 11 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | Historical beta unsigned | Recorded for `v0.1.0-beta.1`; extraction regression measured | Historical beta available |
+| Windows 10 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | `v0.1.0-beta.2` unsigned | Not available locally | Beta available; real-machine acceptance pending |
+| Windows 11 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | `v0.1.0-beta.2` unsigned | Baseline and shared-runtime regression recorded | Beta available |
 | Linux x86_64 | Core, Unix IPC, and development host compile | Production UI toolkit not selected | DEB/AppImage development commands | Release OpenPGP gate prepared | GNOME/KDE/X11 missing | In development |
 | Linux ARM64 | Core, Unix IPC, and development host compile | Production UI toolkit not selected | DEB/AppImage development commands | Release OpenPGP gate prepared | Real ARM64 Wayland missing | In development |
 | macOS Intel | Core, Unix IPC, and development host compile | AppKit production integration pending | Universal 2 development command | Developer ID/notarization inputs unavailable | Real Intel Mac missing | In development |
 | macOS Apple Silicon | Core, Unix IPC, and development host compile | AppKit production integration pending | Universal 2 development command | Developer ID/notarization inputs unavailable | Real Apple-Silicon Mac missing | In development |
 
 The blocked prototype gates are recorded in [Linux native UI gate](performance/2026-07-21-linux-native-ui-gate.md) and [macOS AppKit UI gate](performance/2026-07-21-macos-appkit-ui-gate.md). Both dispositions are `rework`, not production decisions.
+
+The Windows `v0.1.0-beta.N` line is an independently versioned preview track. Its availability does not imply Linux/macOS support or completion of the atomic cross-platform release contract.
 
 ## Required release evidence
 

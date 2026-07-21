@@ -33,7 +33,7 @@ Deliver a genuinely supported, low-resource Recentry release that opens or focus
 - Local targets and supported VS Code URIs are launched with argument arrays, never shell-composed commands.
 - There is no telemetry, cloud synchronization, background network traffic, or transmission of project paths. Diagnostics hide or hash sensitive paths.
 - Repository documentation and public-facing release text are written in English. The product UI supports English and Simplified Chinese.
-- The existing `v0.1.0-beta.1` release remains an historical unsigned Windows-only beta and does not satisfy this specification.
+- The independently versioned Windows-only `v0.1.0-beta.N` preview line, including `v0.1.0-beta.2`, does not satisfy this specification or change its support gates.
 
 ## Non-goals
 
@@ -61,7 +61,7 @@ Deliver a genuinely supported, low-resource Recentry release that opens or focus
 | Every listed artifact is mandatory. | A partial artifact set is not the requested cross-platform release. | User | A vendor deprecates a format or an architecture loses supported tooling. |
 | A support claim requires native CI plus real GUI acceptance. | Hosted CI cannot prove global shortcuts, tray/menu behavior, focus dismissal, multi-monitor placement, or real process budgets. | User | An automated environment is proven equivalent to the required real GUI evidence. |
 | Supported artifacts participate in platform publisher-trust paths. | macOS distribution requires Developer ID/notarization for the intended trust experience; Windows publisher identity uses Authenticode; Linux assets use a signed checksum manifest. | User | Distribution moves to a trusted store or repository that supplies an equivalent verified chain. |
-| Cross-platform release and rollback are atomic. | Missing one mandatory target blocks release, so a post-release failure invalidates the same support unit. | User | Platform distributions become independently versioned products with separate support contracts. |
+| The first supported cross-platform release and its rollback are atomic; Windows-only betas use a separate preview contract. | Missing one mandatory target blocks the cross-platform release. The owner accepted an independently versioned Windows preview track on 2026-07-21 without changing Linux/macOS support claims. | User | A platform beta is proposed for supported or stable status. |
 | Public positioning follows evidence. | Code may merge before validation, but README and GitHub metadata must say `in development` until the entire matrix passes. | User | ReleaseReadiness becomes green or an atomic withdrawal occurs. |
 
 ### Open choices
@@ -140,4 +140,4 @@ If post-release evidence invalidates any mandatory asset, architecture, desktop 
 - Default: configuration uses the platform-standard per-user application-data location and atomic replacement; revisit if a package sandbox supplies a mandatory container location.
 - Default: a desktop without a status-notifier host remains supported through the global shortcut and `recentry show`; revisit if neither entry point is available in a declared supported environment.
 - Default: development CI may produce unsigned artifacts for testing, but they are never promoted or described as supported releases; revisit when the complete signing credential set is available.
-- Default: the existing Windows-only beta remains available as historical evidence unless a security issue requires withdrawal.
+- Default: independently versioned Windows-only betas may remain available under their preview contract unless a security issue requires withdrawal.

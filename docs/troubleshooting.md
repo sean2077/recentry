@@ -24,7 +24,7 @@ Quit Recentry, then remove `%APPDATA%\Recentry\config.json`. Uninstall intention
 
 ## Linux or macOS development artifacts do not provide a complete launcher
 
-Those artifacts are explicitly unverified engineering builds. Linux's production UI toolkit and macOS AppKit integration have not passed their native gates. Use the supported historical Windows beta or contribute native evidence; do not report an unverified artifact as a supported release regression.
+Those artifacts are explicitly unverified engineering builds. Linux's production UI toolkit and macOS AppKit integration have not passed their native gates. Use the current Windows beta or contribute native evidence; do not report an unverified artifact as a supported release regression.
 
 ## Reporting safely
 

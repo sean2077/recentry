@@ -3,6 +3,8 @@ param(
     [switch]$SkipBuild,
     [switch]$Force,
     [switch]$Release,
+    [switch]$WindowsBeta,
+    [string]$WindowsBetaAcceptanceReport,
     [string]$MakeNsis,
     [string]$SignTool,
     [string]$SigningThumbprint,
@@ -13,8 +15,17 @@ $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -and $env:OS -ne 'Windows_NT') {
     throw 'Windows packaging must run on Windows.'
 }
+if ($Release -and $WindowsBeta) {
+    throw '-Release and -WindowsBeta are mutually exclusive.'
+}
 if ($Release -and $env:RECENTRY_NATIVE_ACCEPTANCE -ne 'green') {
     throw 'Release packaging requires RECENTRY_NATIVE_ACCEPTANCE=green from the protected acceptance job.'
+}
+if ($WindowsBeta -and [string]::IsNullOrWhiteSpace($WindowsBetaAcceptanceReport)) {
+    throw 'Windows beta packaging requires -WindowsBetaAcceptanceReport <path>.'
+}
+if (-not $WindowsBeta -and -not [string]::IsNullOrWhiteSpace($WindowsBetaAcceptanceReport)) {
+    throw '-WindowsBetaAcceptanceReport is valid only with -WindowsBeta.'
 }
 if ($Release -and ([string]::IsNullOrWhiteSpace($SignTool) -or [string]::IsNullOrWhiteSpace($SigningThumbprint))) {
     throw 'Release packaging requires -SignTool and -SigningThumbprint.'
@@ -27,6 +38,32 @@ if (-not [string]::IsNullOrWhiteSpace($SignTool) -and -not (Test-Path -LiteralPa
 }
 
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$performanceRoot = [IO.Path]::GetFullPath((Join-Path $workspace 'docs\performance')).TrimEnd('\') + '\'
+if ($WindowsBeta) {
+    $reportPath = if ([IO.Path]::IsPathRooted($WindowsBetaAcceptanceReport)) {
+        [IO.Path]::GetFullPath($WindowsBetaAcceptanceReport)
+    } else {
+        [IO.Path]::GetFullPath((Join-Path $workspace $WindowsBetaAcceptanceReport))
+    }
+    if (-not $reportPath.StartsWith($performanceRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Windows beta acceptance report must be under docs\performance: $reportPath"
+    }
+    if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+        throw "Windows beta acceptance report was not found: $reportPath"
+    }
+    $report = Get-Content -LiteralPath $reportPath -Raw
+    foreach ($measurement in @(
+        'Host Private Working Set after 60 seconds',
+        'Host idle CPU over the next 60 seconds',
+        'Active host/UI Private Working Set',
+        'Cold activation p95, 30 samples',
+        'Warm activation p95, 30 samples'
+    )) {
+        if ($report -notmatch "(?m)^\| $([regex]::Escape($measurement)) \|.*\| pass \|$") {
+            throw "Windows beta acceptance report does not contain a passing result for: $measurement"
+        }
+    }
+}
 $targetRoot = [IO.Path]::GetFullPath((Join-Path $workspace 'target\package'))
 $distRoot = [IO.Path]::GetFullPath((Join-Path $workspace 'dist'))
 $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
@@ -134,7 +171,7 @@ $checksumLines = foreach ($path in @($installerPath, $zipPath)) {
 }
 [IO.File]::WriteAllLines($checksumPath, $checksumLines, [Text.UTF8Encoding]::new($false))
 
-$mode = if ($Release) { 'release' } else { 'development' }
+$mode = if ($Release) { 'release' } elseif ($WindowsBeta) { 'windows-beta' } else { 'development' }
 Write-Output "Created Recentry $version Windows x64 $mode artifacts:"
 Get-Item -LiteralPath $installerPath, $zipPath, $checksumPath |
     Select-Object Name, Length, FullName

@@ -4,11 +4,11 @@
 
 Recentry is a low-resource, native launcher for reopening recent development projects. Press a global shortcut, type to filter, then use the keyboard to open or focus a project in VS Code.
 
-Cross-platform support is under active development. The only public end-user build today is the historical unsigned Windows x64 beta, `v0.1.0-beta.1`. Linux and macOS code, CI, and development packaging do not yet satisfy the native UI, resource, signing, or real-machine acceptance gates and are not supported releases.
+Cross-platform support is under active development. The latest public end-user build is the unsigned Windows x64 beta, `v0.1.0-beta.2`. This platform-scoped preview is independent of the first supported cross-platform release. Linux and macOS code, CI, and development packaging do not yet satisfy the native UI, resource, signing, or real-machine acceptance gates and are not supported releases.
 
 | Platform | Current status | Public artifacts |
 | --- | --- | --- |
-| Windows 10/11 x64 | Beta available; Windows 11 acceptance recorded | NSIS installer and portable ZIP for `v0.1.0-beta.1` |
+| Windows 10/11 x64 | Beta available; Windows 11 acceptance recorded | NSIS installer and portable ZIP for `v0.1.0-beta.2` |
 | Linux x86_64/ARM64 | In development; native UI gate blocked pending real desktops | None |
 | macOS 13+ Intel/Apple Silicon | In development; AppKit and native acceptance pending | None |
 
@@ -16,20 +16,20 @@ See [Platform support](docs/platform-support.md) for the evidence boundary.
 
 ## Install the Windows beta
 
-Download assets only from the [`v0.1.0-beta.1` release](https://github.com/sean2077/recentry/releases/tag/v0.1.0-beta.1).
+Download assets only from the [`v0.1.0-beta.2` release](https://github.com/sean2077/recentry/releases/tag/v0.1.0-beta.2).
 
 ### Installer
 
-1. Download `Recentry-0.1.0-beta.1-windows-x64-setup.exe` and the Windows SHA-256 file.
+1. Download `Recentry-0.1.0-beta.2-windows-x64-setup.exe` and the Windows SHA-256 file.
 2. Verify the installer hash.
 3. Run the installer. It installs per-user to `%LOCALAPPDATA%\Programs\Recentry` without administrator privileges.
 4. Leave **Open Recentry** selected on the final page.
 
-The historical beta is unsigned, so SmartScreen may warn. Verify the checksum before choosing **More info** and **Run anyway**.
+This beta is unsigned, so SmartScreen may warn. Verify the checksum before choosing **More info** and **Run anyway**.
 
 ### Portable ZIP
 
-1. Download and extract `Recentry-0.1.0-beta.1-windows-x64.zip`.
+1. Download and extract `Recentry-0.1.0-beta.2-windows-x64.zip`.
 2. Keep `recentry.exe` and `recentry-ui.exe` together.
 3. Run `recentry.exe`.
 
@@ -69,7 +69,7 @@ Running `recentry` without arguments is equivalent to `recentry show`. The inter
 
 ## Resources and privacy
 
-The Windows 11 x64 production baseline measured a 1.043 MiB host Private Working Set, 0% idle CPU, a 4.168 MiB active process tree, and cold/warm p95 activation of 174.852/88.725 ms over 30 samples. After the shared-host extraction and final Win32 thread-affinity fix, local regression measurements remained within the fixed gates at 0.746 MiB, 0% idle CPU, a 2.785 MiB active tree, and 160.932/93.065 ms cold/warm p95. See the original [Windows acceptance report](docs/performance/2026-07-21-production-windows-acceptance.md) and the [shared-host regression](docs/performance/2026-07-21-shared-host-regression.md). The new measurements remain local evidence until committed CI/native acceptance is complete.
+The Windows 11 x64 production baseline measured a 1.043 MiB host Private Working Set, 0% idle CPU, a 4.168 MiB active process tree, and cold/warm p95 activation of 174.852/88.725 ms over 30 samples. After the shared-host extraction and final Win32 thread-affinity fix, local regression measurements remained within the fixed gates at 0.746 MiB, 0% idle CPU, a 2.785 MiB active tree, and 160.932/93.065 ms cold/warm p95. See the original [Windows acceptance report](docs/performance/2026-07-21-production-windows-acceptance.md) and the [shared-host regression](docs/performance/2026-07-21-shared-host-regression.md). These are Windows 11 real-machine measurements; Windows 10 real-machine acceptance remains pending.
 
 Recentry has no telemetry, cloud synchronization, or background network requests. Stable VS Code data is read only. Diagnostics hash configuration paths and do not list project paths.
 
