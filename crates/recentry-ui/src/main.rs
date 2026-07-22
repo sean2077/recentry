@@ -99,6 +99,7 @@ mod windows_main {
     const LAUNCHER_HEADER_HEIGHT: i32 = 36;
     const LAUNCHER_ROW_HEIGHT: i32 = 24;
     const LAUNCHER_VISIBLE_ROWS: i32 = 12;
+    const LAUNCHER_NONCLIENT_HEIGHT: i32 = 4;
     const STATIC_RIGHT: u32 = 0x0002;
     const STATIC_NOPREFIX: u32 = 0x0080;
     const STATIC_CENTER_IMAGE: u32 = 0x0200;
@@ -1468,7 +1469,9 @@ mod windows_main {
     }
 
     const fn launcher_height() -> i32 {
-        LAUNCHER_HEADER_HEIGHT + LAUNCHER_ROW_HEIGHT * LAUNCHER_VISIBLE_ROWS
+        LAUNCHER_HEADER_HEIGHT
+            + LAUNCHER_ROW_HEIGHT * LAUNCHER_VISIBLE_ROWS
+            + LAUNCHER_NONCLIENT_HEIGHT
     }
 
     unsafe fn launcher_owns_foreground(state: &AppState) -> bool {
