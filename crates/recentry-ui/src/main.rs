@@ -97,8 +97,8 @@ mod windows_main {
     const IDLE_EXIT_AFTER: Duration = Duration::from_secs(15 * 60);
     const LAUNCHER_WIDTH: i32 = 760;
     const LAUNCHER_HEADER_HEIGHT: i32 = 36;
-    const LAUNCHER_ROW_HEIGHT: i32 = 28;
-    const LAUNCHER_VISIBLE_ROWS: i32 = 8;
+    const LAUNCHER_ROW_HEIGHT: i32 = 24;
+    const LAUNCHER_VISIBLE_ROWS: i32 = 12;
     const STATIC_RIGHT: u32 = 0x0002;
     const STATIC_NOPREFIX: u32 = 0x0080;
     const STATIC_CENTER_IMAGE: u32 = 0x0200;
