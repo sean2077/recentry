@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.1.0-beta.4 — 2026-07-22
+
+- Expand the Windows launcher from eight to twelve visible recent-project rows.
+- Reduce result-row height from 28 to 24 logical pixels so more entries fit while preserving the compact single-line layout.
+
 ## 0.1.0-beta.3 — 2026-07-21
 
 - Publish the second public Windows x64 beta with the NSIS installer, portable ZIP, and SHA-256 checksums.

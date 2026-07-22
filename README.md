@@ -4,11 +4,11 @@
 
 Recentry is a low-resource, native launcher for reopening recent development projects. Press a global shortcut, type to filter, then use the keyboard to open or focus a project in VS Code.
 
-Cross-platform support is under active development. The latest public end-user build is the unsigned Windows x64 beta, `v0.1.0-beta.3`. This platform-scoped preview is independent of the first supported cross-platform release. Linux and macOS code, CI, and development packaging do not yet satisfy the native UI, resource, signing, or real-machine acceptance gates and are not supported releases.
+Cross-platform support is under active development. The latest public end-user build is the unsigned Windows x64 beta, `v0.1.0-beta.4`. This platform-scoped preview is independent of the first supported cross-platform release. Linux and macOS code, CI, and development packaging do not yet satisfy the native UI, resource, signing, or real-machine acceptance gates and are not supported releases.
 
 | Platform | Current status | Public artifacts |
 | --- | --- | --- |
-| Windows 10/11 x64 | Beta available; Windows 11 acceptance recorded | NSIS installer and portable ZIP for `v0.1.0-beta.3` |
+| Windows 10/11 x64 | Beta available; Windows 11 acceptance recorded | NSIS installer and portable ZIP for `v0.1.0-beta.4` |
 | Linux x86_64/ARM64 | In development; native UI gate blocked pending real desktops | None |
 | macOS 13+ Intel/Apple Silicon | In development; AppKit and native acceptance pending | None |
 
@@ -16,11 +16,11 @@ See [Platform support](docs/platform-support.md) for the evidence boundary.
 
 ## Install the Windows beta
 
-Download assets only from the [`v0.1.0-beta.3` release](https://github.com/sean2077/recentry/releases/tag/v0.1.0-beta.3).
+Download assets only from the [`v0.1.0-beta.4` release](https://github.com/sean2077/recentry/releases/tag/v0.1.0-beta.4).
 
 ### Installer
 
-1. Download `Recentry-0.1.0-beta.3-windows-x64-setup.exe` and the Windows SHA-256 file.
+1. Download `Recentry-0.1.0-beta.4-windows-x64-setup.exe` and the Windows SHA-256 file.
 2. Verify the installer hash.
 3. Run the installer. It installs per-user to `%LOCALAPPDATA%\Programs\Recentry` without administrator privileges.
 4. Leave **Open Recentry** selected on the final page.
@@ -29,7 +29,7 @@ This beta is unsigned, so SmartScreen may warn. Verify the checksum before choos
 
 ### Portable ZIP
 
-1. Download and extract `Recentry-0.1.0-beta.3-windows-x64.zip`.
+1. Download and extract `Recentry-0.1.0-beta.4-windows-x64.zip`.
 2. Keep `recentry.exe` and `recentry-ui.exe` together.
 3. Run `recentry.exe`.
 

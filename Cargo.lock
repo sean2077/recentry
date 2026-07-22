@@ -316,7 +316,7 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "recentry-core"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "rusqlite",
  "serde",
@@ -328,7 +328,7 @@ dependencies = [
 
 [[package]]
 name = "recentry-host"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "recentry-ipc",
  "recentry-protocol",
@@ -340,7 +340,7 @@ dependencies = [
 
 [[package]]
 name = "recentry-ipc"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "libc",
  "recentry-protocol",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "recentry-protocol"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -360,7 +360,7 @@ dependencies = [
 
 [[package]]
 name = "recentry-ui"
-version = "0.1.0-beta.3"
+version = "0.1.0-beta.4"
 dependencies = [
  "recentry-core",
  "recentry-ipc",

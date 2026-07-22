@@ -6,8 +6,8 @@ Recentry uses an evidence-gated support model. A platform is supported only when
 
 | Target | Core and IPC | Native host/UI | Packages | Trust | Real GUI acceptance | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| Windows 10 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | `v0.1.0-beta.3` unsigned | Not available locally | Beta available; real-machine acceptance pending |
-| Windows 11 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | `v0.1.0-beta.3` unsigned | Baseline and shared-runtime regression recorded | Beta available |
+| Windows 10 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | `v0.1.0-beta.4` unsigned | Not available locally | Beta available; real-machine acceptance pending |
+| Windows 11 x64 | Implemented | Win32 implementation | NSIS/ZIP implemented | `v0.1.0-beta.4` unsigned | Baseline and shared-runtime regression recorded | Beta available |
 | Linux x86_64 | Core, Unix IPC, and development host compile | Production UI toolkit not selected | DEB/AppImage development commands | Release OpenPGP gate prepared | GNOME/KDE/X11 missing | In development |
 | Linux ARM64 | Core, Unix IPC, and development host compile | Production UI toolkit not selected | DEB/AppImage development commands | Release OpenPGP gate prepared | Real ARM64 Wayland missing | In development |
 | macOS Intel | Core, Unix IPC, and development host compile | AppKit production integration pending | Universal 2 development command | Developer ID/notarization inputs unavailable | Real Intel Mac missing | In development |
