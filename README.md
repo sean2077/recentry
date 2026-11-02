@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/sean2077/recentry/actions/workflows/ci.yml/badge.svg)](https://github.com/sean2077/recentry/actions/workflows/ci.yml)
 
+> [!IMPORTANT]
+> **This repository is archived and no longer maintained.** Development continues in **[sean2077/sean-toolbox](https://github.com/sean2077/sean-toolbox)**, a cross-platform Rust + Slint toolbox that combines Recentry's recent-project launcher with [winguake](https://github.com/sean2077/winguake)'s window hotkeys and Quake docking. Existing releases and source remain available for reference.
+
 Recentry is a low-resource, native launcher for reopening recent development projects. Press a global shortcut, type to filter, then use the keyboard to open or focus a project in VS Code.
 
 Cross-platform support is under active development. The latest public end-user build is the unsigned Windows x64 beta, `v0.1.0-beta.4`. This platform-scoped preview is independent of the first supported cross-platform release. Linux and macOS code, CI, and development packaging do not yet satisfy the native UI, resource, signing, or real-machine acceptance gates and are not supported releases.
